@@ -237,11 +237,13 @@ def run_nash_equilibrium_analysis():
     spne.calculation_count = 0
     
     # Count how many TOP champions are available for Red's pick
-    top_champions = [c for c in available if scorer.get_champion_data(c) and scorer.get_champion_data(c).get('is_top', 0) == 1]
+    # Restrict to scenario's extended TOP pool
+    top_champions = [c for c in EXTENDED_CHAMPION_POOL["TOP"] if c in available]
     
     # Count how many BOT and SUPPORT champions are available for Blue's picks
-    bot_champions = [c for c in available if scorer.get_champion_data(c) and scorer.get_champion_data(c).get('is_adc', 0) == 1]
-    sup_champions = [c for c in available if scorer.get_champion_data(c) and scorer.get_champion_data(c).get('is_support', 0) == 1]
+    # Restrict to scenario's extended BOT and SUPPORT pools
+    bot_champions = [c for c in EXTENDED_CHAMPION_POOL["BOT"] if c in available]
+    sup_champions = [c for c in EXTENDED_CHAMPION_POOL["SUPPORT"] if c in available]
     
     print(f"Starting fresh SPNE calculation...")
     print(f"  Beam width: {spne.beam_width} (set high to prevent pruning - we only have ~{len(bot_champions) * len(sup_champions)} Blue combinations)")
@@ -290,21 +292,22 @@ def run_nash_equilibrium_analysis():
         print("=" * 70)
         print(f"Testing ALL Blue combinations (BOT + SUPPORT) to verify optimal picks...\n")
         
-        # Get all valid BOT and SUPPORT champions
+        # Get all valid BOT and SUPPORT champions from scenario pools
         valid_bot_champions = []
         valid_sup_champions = []
-        for champ in available:
-            if champ in draft.bans:
+        # BOT
+        for champ in EXTENDED_CHAMPION_POOL["BOT"]:
+            if champ in draft.bans or champ not in available:
                 continue
-            champ_data = spne.scorer.get_champion_data(champ)
-            if champ_data:
-                if champ_data.get('is_adc', 0) == 1:
-                    valid_bot_champions.append(champ)
-                if champ_data.get('is_support', 0) == 1:
-                    valid_sup_champions.append(champ)
+            valid_bot_champions.append(champ)
+        # SUPPORT
+        for champ in EXTENDED_CHAMPION_POOL["SUPPORT"]:
+            if champ in draft.bans or champ not in available:
+                continue
+            valid_sup_champions.append(champ)
         
-        print(f"Found {len(valid_bot_champions)} valid BOT champions")
-        print(f"Found {len(valid_sup_champions)} valid SUPPORT champions")
+        print(f"Found {len(valid_bot_champions)} valid BOT champions (scenario pool)")
+        print(f"Found {len(valid_sup_champions)} valid SUPPORT champions (scenario pool)")
         print(f"Total combinations to test: {len(valid_bot_champions) * len(valid_sup_champions)}\n")
         
         # DON'T clear cache - reuse it to avoid duplicate API calls
@@ -362,16 +365,14 @@ def run_nash_equilibrium_analysis():
         taken = set(draft.bans + all_picked)
         valid_top_champions = []
         seen_champs = set()  # Track to avoid duplicates
-        # Check all champions in extended pool that can play TOP
-        for champ in ALL_EXTENDED_CHAMPIONS:
+        # Check only champions in scenario's extended TOP pool
+        for champ in EXTENDED_CHAMPION_POOL["TOP"]:
             if champ in taken or champ in seen_champs:
                 continue
-            champ_data = spne.scorer.get_champion_data(champ)
-            if champ_data and champ_data.get('is_top', 0) == 1:
-                valid_top_champions.append(champ)
-                seen_champs.add(champ)
+            valid_top_champions.append(champ)
+            seen_champs.add(champ)
         
-        print(f"Found {len(valid_top_champions)} valid TOP champions for Red")
+        print(f"Found {len(valid_top_champions)} valid TOP champions for Red (scenario pool)")
         
         # OPTIMIZATION: Pre-calculate Rumble vs all Red TOP champions
         # This is the ONLY matchup that varies across calculations
@@ -520,124 +521,56 @@ def run_nash_equilibrium_analysis():
                 if bot_champ != sup_champ:
                     bot_sup_combos.append((bot_champ, sup_champ))
         
-        import time
-        start_time = time.time()
-        combo_start_time = None
-        with tqdm(total=total_combos, desc="Blue combinations", unit="combo", mininterval=1.0) as pbar:
-            pbar.start_t = start_time
-            for bot_champ, sup_champ in bot_sup_combos:
-                # Check for duplicate combinations
-                combo_key = (bot_champ, sup_champ)
-                if combo_key in seen_combos:
+        # Calculate all Blue combinations (no progress bar - should be fast with caching)
+        for bot_champ, sup_champ in bot_sup_combos:
+            # Check for duplicate combinations
+            combo_key = (bot_champ, sup_champ)
+            if combo_key in seen_combos:
+                continue
+            seen_combos.add(combo_key)
+            
+            combo_count += 1
+            test_blue = blue_team.copy()
+            test_blue[3] = bot_champ  # BOT
+            test_blue[4] = sup_champ  # SUPPORT
+            
+            # For each Blue combination, test ALL Red TOP picks and find the minimum payoff
+            # (Red will pick the TOP that minimizes Blue's payoff)
+            best_red_top_for_combo = None
+            best_payoff_for_combo = float('inf')  # Red wants minimum (most negative)
+            all_red_responses = []  # Track all Red responses for this Blue combo
+            
+            # Test ALL Red TOP picks for this Blue combination
+            for top_champ in sorted(valid_top_champions):
+                # Can't pick same champion that Blue already has
+                if top_champ in test_blue:
                     continue
-                seen_combos.add(combo_key)
                 
-                combo_count += 1
-                combo_start_time = time.time()
-                combo_cache_before = len(spne.payoff_cache)
-                combo_calc_before = spne.calculation_count
-                test_blue = blue_team.copy()
-                test_blue[3] = bot_champ  # BOT
-                test_blue[4] = sup_champ  # SUPPORT
+                # Double-check: make sure champion isn't None or already picked
+                if not top_champ or top_champ in draft.bans:
+                    continue
                 
-                # DEBUG: Print when starting a new combination
-                print(f"\n[DEBUG] Starting combo #{combo_count}/{total_combos}: {bot_champ}+{sup_champ}")
-                print(f"  Time elapsed: {combo_start_time - start_time:.2f}s")
-                print(f"  Cache size: {combo_cache_before} entries")
-                print(f"  Calculation count: {combo_calc_before}")
+                test_red = red_team.copy()
+                test_red[0] = top_champ
                 
-                # Update progress bar with current combination
-                pbar.set_description(f"Blue: {bot_champ}+{sup_champ}")
+                test_payoff = spne.calculate_payoff(
+                    test_blue, test_red,
+                    blue_players, red_players, 'na1', use_fast_mode=False
+                )
                 
-                # For each Blue combination, test ALL Red TOP picks and find the minimum payoff
-                # (Red will pick the TOP that minimizes Blue's payoff)
-                best_red_top_for_combo = None
-                best_payoff_for_combo = float('inf')  # Red wants minimum (most negative)
-                all_red_responses = []  # Track all Red responses for this Blue combo
+                all_red_responses.append((top_champ, test_payoff))
                 
-                # Test ALL Red TOP picks for this Blue combination
-                top_champ_count = 0
-                top_champ_total = len([tc for tc in sorted(valid_top_champions) if tc not in test_blue and tc and tc not in draft.bans])
-                print(f"  Testing {top_champ_total} Red TOP picks...")
-                
-                for top_champ in sorted(valid_top_champions):
-                    # Can't pick same champion that Blue already has
-                    if top_champ in test_blue:
-                        continue
-                    
-                    # Double-check: make sure champion isn't None or already picked
-                    if not top_champ or top_champ in draft.bans:
-                        continue
-                    
-                    top_champ_count += 1
-                    top_calc_start = time.time()
-                    test_red = red_team.copy()
-                    test_red[0] = top_champ
-                    
-                    # Track cache size before calculation
-                    cache_size_before = len(spne.payoff_cache)
-                    calc_count_before = spne.calculation_count
-                    matchup_cache_before = len(spne.scorer.matchup_cache)
-                    
-                    # DEBUG: Print every 5th TOP champ or first/last
-                    debug_this = (top_champ_count <= 3 or top_champ_count % 5 == 0 or top_champ_count == top_champ_total)
-                    if debug_this:
-                        print(f"    [{top_champ_count}/{top_champ_total}] Testing Red TOP: {top_champ}...", end='', flush=True)
-                    
-                    test_payoff = spne.calculate_payoff(
-                        test_blue, test_red,
-                        blue_players, red_players, 'na1', use_fast_mode=False
-                    )
-                    
-                    top_calc_time = time.time() - top_calc_start
-                    
-                    # Check if this was a cache hit
-                    cache_hit = (len(spne.payoff_cache) == cache_size_before and 
-                                spne.calculation_count == calc_count_before)
-                    matchup_cache_growth = len(spne.scorer.matchup_cache) - matchup_cache_before
-                    
-                    if debug_this:
-                        cache_status = "CACHE HIT" if cache_hit else f"NEW (cache: +{len(spne.payoff_cache) - cache_size_before}, matchups: +{matchup_cache_growth})"
-                        print(f" payoff={test_payoff:+.4f}, time={top_calc_time:.2f}s, {cache_status}")
-                    
-                    all_red_responses.append((top_champ, test_payoff))
-                    
-                    # Red wants the MINIMUM payoff (most negative)
-                    if test_payoff < best_payoff_for_combo:
-                        best_payoff_for_combo = test_payoff
-                        best_red_top_for_combo = top_champ
-                
-                combo_time = time.time() - combo_start_time
-                # The payoff for this Blue combination is the minimum (Red's best response)
-                test_payoff = best_payoff_for_combo
-                
-                # Blue gets alpha bonus
-                kt_win = 1 / (1 + math.exp(-(test_payoff + alpha)))
-                blue_combinations.append((bot_champ, sup_champ, test_payoff, kt_win, best_red_top_for_combo))
-                
-                # DEBUG: Print summary for this combination
-                cache_growth = len(spne.payoff_cache) - combo_cache_before
-                calc_growth = spne.calculation_count - combo_calc_before
-                print(f"  [DEBUG] Completed combo #{combo_count}: {bot_champ}+{sup_champ}")
-                print(f"    Best Red TOP: {best_red_top_for_combo}, Payoff: {test_payoff:+.4f}, KT Win: {kt_win:.2%}")
-                print(f"    Time for this combo: {combo_time:.2f}s ({combo_time/top_champ_count:.3f}s per TOP champ)")
-                print(f"    Cache: {len(spne.payoff_cache)} entries (+{cache_growth}), Calculations: {spne.calculation_count} (+{calc_growth})")
-                print(f"    Matchup cache: {len(spne.scorer.matchup_cache)} entries")
-                
-                # Update progress bar
-                pbar.update(1)
-                cache_hits = total_combos * len(valid_top_champions) - spne.calculation_count
-                pbar.set_postfix({
-                    'cache': f"{len(spne.payoff_cache)} entries",
-                    'calc': f"{spne.calculation_count} calls",
-                    'hits': f"{cache_hits} cached"
-                })
-                
-                # Print first combination to show it's working
-                if combo_count == 1:
-                    print(f"\n[First calculation complete] {bot_champ}+{sup_champ} vs {best_red_top_for_combo}: payoff={test_payoff:+.4f}")
-                    print(f"  Cache: {len(spne.payoff_cache)} entries, Calculations: {spne.calculation_count}")
-                    print(f"  Note: First run is slow due to API calls. Subsequent runs will be faster.\n")
+                # Red wants the MINIMUM payoff (most negative)
+                if test_payoff < best_payoff_for_combo:
+                    best_payoff_for_combo = test_payoff
+                    best_red_top_for_combo = top_champ
+            
+            # The payoff for this Blue combination is the minimum (Red's best response)
+            test_payoff = best_payoff_for_combo
+            
+            # Blue gets alpha bonus
+            kt_win = 1 / (1 + math.exp(-(test_payoff + alpha)))
+            blue_combinations.append((bot_champ, sup_champ, test_payoff, kt_win, best_red_top_for_combo))
         
         # Sort by payoff (descending - highest first = best for Blue)
         blue_combinations.sort(key=lambda x: x[2], reverse=True)
@@ -843,17 +776,14 @@ def run_nash_equilibrium_analysis():
         best_t1_payoff_to_optimal = float('inf')  # Red wants MINIMUM payoff (most negative = best for Red)
         t1_responses_to_optimal = []  # Track all responses for analysis
         
-        # Get all valid TOP champions (no duplicates, not in Blue team)
+        # Get all valid TOP champions (no duplicates, not in Blue team) from scenario pool
         valid_top_champions = []
         seen_champs = set()  # Track to avoid duplicates
-        for champ in ALL_EXTENDED_CHAMPIONS:
+        for champ in EXTENDED_CHAMPION_POOL["TOP"]:
             if champ in draft.bans or champ in optimal_blue_team or champ in seen_champs:
                 continue
-            # Check if champion can play TOP
-            champ_data = spne.scorer.get_champion_data(champ)
-            if champ_data and champ_data.get('is_top', 0) == 1:
-                valid_top_champions.append(champ)
-                seen_champs.add(champ)
+            valid_top_champions.append(champ)
+            seen_champs.add(champ)
         
         print("=" * 70)
         print("ALL CALCULATIONS:")
@@ -861,44 +791,35 @@ def run_nash_equilibrium_analysis():
         print(f"{'Champion':<20} {'Payoff':>12} {'T1 Win%':>10} {'Status':<20}")
         print("-" * 70)
         
-        # Progress bar for Red TOP picks
-        with tqdm(total=len(valid_top_champions), desc="Red TOP picks", unit="champ") as pbar:
-            for champ in sorted(valid_top_champions):  # Sort alphabetically for consistent output
-                test_red = optimal_red_team.copy()
-                test_red[0] = champ
-                # Cache will prevent duplicate API calls for same team matchups
-                test_payoff = spne.calculate_payoff(
-                    optimal_blue_team, test_red,
-                    blue_players, red_players, 'na1', use_fast_mode=False
-                )
-                
-                # Calculate win rate: payoff is from Blue's perspective
-                # Blue gets alpha bonus, so Blue's win rate = 1 / (1 + exp(-(payoff + alpha)))
-                # Red's win rate = 1 - Blue's win rate = 1 / (1 + exp(payoff + alpha))
-                blue_win = 1 / (1 + math.exp(-(test_payoff + alpha)))
-                t1_win = 1 - blue_win  # Red's win rate (no alpha bonus for Red)
-                t1_responses_to_optimal.append((champ, test_payoff, t1_win))
-                
-                # Determine status (only mark SPNE)
-                status = ""
-                if test_payoff < best_t1_payoff_to_optimal:
-                    best_t1_payoff_to_optimal = test_payoff
-                    t1_best_response_to_optimal = champ
-                if champ == optimal_t1_top:
-                    status = " [SPNE]"
-                
-                payoff_str = f"{test_payoff:>+12.4f}"
-                
-                # Show win rate with more precision to see differences
-                print(f"{champ:<20} {payoff_str:>30} {t1_win:>9.2%} {status}")
-                
-                # Update progress bar
-                pbar.update(1)
-                pbar.set_postfix({
-                    'cache_size': len(spne.payoff_cache),
-                    'calc_count': spne.calculation_count,
-                    'best': t1_best_response_to_optimal or 'N/A'
-                })
+        # Calculate Red TOP picks (no progress bar - should be fast with caching)
+        for champ in sorted(valid_top_champions):  # Sort alphabetically for consistent output
+            test_red = optimal_red_team.copy()
+            test_red[0] = champ
+            # Cache will prevent duplicate API calls for same team matchups
+            test_payoff = spne.calculate_payoff(
+                optimal_blue_team, test_red,
+                blue_players, red_players, 'na1', use_fast_mode=False
+            )
+            
+            # Calculate win rate: payoff is from Blue's perspective
+            # Blue gets alpha bonus, so Blue's win rate = 1 / (1 + exp(-(payoff + alpha)))
+            # Red's win rate = 1 - Blue's win rate = 1 / (1 + exp(payoff + alpha))
+            blue_win = 1 / (1 + math.exp(-(test_payoff + alpha)))
+            t1_win = 1 - blue_win  # Red's win rate (no alpha bonus for Red)
+            t1_responses_to_optimal.append((champ, test_payoff, t1_win))
+            
+            # Determine status (only mark SPNE)
+            status = ""
+            if test_payoff < best_t1_payoff_to_optimal:
+                best_t1_payoff_to_optimal = test_payoff
+                t1_best_response_to_optimal = champ
+            if champ == optimal_t1_top:
+                status = " [SPNE]"
+            
+            payoff_str = f"{test_payoff:>+12.4f}"
+            
+            # Show win rate with more precision to see differences
+            print(f"{champ:<20} {payoff_str:>30} {t1_win:>9.2%} {status}")
         
         # Sort by payoff (ascending - most negative first = best for Red)
         t1_responses_to_optimal.sort(key=lambda x: x[1])
@@ -932,47 +853,33 @@ def run_nash_equilibrium_analysis():
         best_t1_payoff_to_actual = float('inf')  # Red wants to minimize Blue's payoff
         t1_responses_to_actual = []  # Track all responses for analysis
         
-        # Get all valid TOP champions
-        valid_top_champions_actual = []
-        # Get all valid TOP champions
+        # Get all valid TOP champions from scenario pool
         valid_top_champions_actual = []
         seen_champs = set()  # Track to avoid duplicates
-        for champ in ALL_EXTENDED_CHAMPIONS:
+        for champ in EXTENDED_CHAMPION_POOL["TOP"]:
             if champ in draft.bans or champ in actual_blue_team or champ in seen_champs:
                 continue
-            # Check if champion can play TOP
-            champ_data = spne.scorer.get_champion_data(champ)
-            if champ_data and champ_data.get('is_top', 0) == 1:
-                valid_top_champions_actual.append(champ)
-                seen_champs.add(champ)
+            valid_top_champions_actual.append(champ)
+            seen_champs.add(champ)
         
-        # Progress bar for Red TOP picks (actual)
-        with tqdm(total=len(valid_top_champions_actual), desc="Red TOP picks (actual)", unit="champ") as pbar:
-            for champ in sorted(valid_top_champions_actual):
-                test_red = actual_red_team.copy()
-                test_red[0] = champ
-                # Cache will prevent duplicate API calls for same team matchups
-                test_payoff = spne.calculate_payoff(
-                    actual_blue_team, test_red,
-                    blue_players, red_players, 'na1', use_fast_mode=False
-                )
-                
-                # Blue gets alpha bonus, Red does not
-                blue_win = 1 / (1 + math.exp(-(test_payoff + alpha)))
-                t1_win = 1 - blue_win  # Red's win rate
-                t1_responses_to_actual.append((champ, test_payoff, t1_win))
-                
-                if test_payoff < best_t1_payoff_to_actual:
-                    best_t1_payoff_to_actual = test_payoff
-                    t1_best_response_to_actual = champ
-                
-                # Update progress bar
-                pbar.update(1)
-                pbar.set_postfix({
-                    'cache_size': len(spne.payoff_cache),
-                    'calc_count': spne.calculation_count,
-                    'best': t1_best_response_to_actual or 'N/A'
-                })
+        # Calculate Red TOP picks (actual) - no progress bar, should be fast with caching
+        for champ in sorted(valid_top_champions_actual):
+            test_red = actual_red_team.copy()
+            test_red[0] = champ
+            # Cache will prevent duplicate API calls for same team matchups
+            test_payoff = spne.calculate_payoff(
+                actual_blue_team, test_red,
+                blue_players, red_players, 'na1', use_fast_mode=False
+            )
+            
+            # Blue gets alpha bonus, Red does not
+            blue_win = 1 / (1 + math.exp(-(test_payoff + alpha)))
+            t1_win = 1 - blue_win  # Red's win rate
+            t1_responses_to_actual.append((champ, test_payoff, t1_win))
+            
+            if test_payoff < best_t1_payoff_to_actual:
+                best_t1_payoff_to_actual = test_payoff
+                t1_best_response_to_actual = champ
         
         # Sort and show top responses
         t1_responses_to_actual.sort(key=lambda x: x[1])  # Sort by payoff (lower = better for Red)

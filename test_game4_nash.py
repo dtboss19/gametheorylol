@@ -1,6 +1,7 @@
 """
-Test Game 1 scenario with Nash Equilibrium analysis.
+Test Game 4 scenario with Nash Equilibrium analysis.
 Compares actual picks vs optimal SPNE strategy.
+T1 is Blue Team, KT is Red Team.
 """
 
 from nash_equilibrium import SubgamePerfectNashEquilibrium
@@ -48,40 +49,42 @@ except ImportError:
                 print(f"\r{self.desc}: {self.n}/{self.total} ({pct:.1f}%) - {rate:.2f} {self.unit}/s", end='', flush=True)
 
 # ============================================================================
-# GAME 2 ACTUAL STATE
+# GAME 4 ACTUAL STATE
 # ============================================================================
-GAME_2_BANS = [
+GAME_4_BANS = [
     "Rumble","Ambessa","Wukong", "XinZhao", "Ryze", "Taliyah", "Varus", "Poppy", "Ashe", "Braum", # Game 1 fearless bans
-    "Bard", "Galio", "Alistar", "Caitlyn", "Trundle", "Yunara", "Yone", "Orianna", "Azir", "Kaisa" # Game 2 actual bans
+    "Sion", "Reksai", "Vi", "JarvanIV", "Mel", "Sylas", "Ezreal", "Sivir", "Neeko", "Lulu", # Game 2 fearless bans
+     "Ksante", "Renekton", "DrMundo", "Viego", "Viktor", "Syndra", "Yunara", "Corki", "Alistar", "Rakan", # Game 3 fearless bans
+    "Yone", "Azir", "Orianna", "Hwei", "Ziggs", "Galio", "Ornn", "Pantheon", "Bard", "Yorick" # Game 4 actual bans
 ]
 
-# KT (Blue Team 1) - 3 picks locked, 2 open (BOT and SUPPORT)
-GAME_2_KT_LOCKED = {
-    "TOP": "Reksai",
-    "JUNGLE": "Vi", 
-    # Mid is open
-    # BOT is open
-    "SUPPORT": "Neeko"
+# KT (Red Team 1) - 4 picks locked, 1 open (TOP)
+GAME_4_KT_LOCKED = {
+    #"TOP": "is open",
+    "JUNGLE": "Trundle", 
+    "MID": "Cassiopeia",
+    "BOT": "Caitlyn",
+    "SUPPORT": "TahmKench"
 }
 
-# T1 (Red Team 2) - 4 picks locked, 1 open (TOP)
-GAME_2_T1_LOCKED = {
-    "TOP": "Sion",
-    "JUNGLE": "JarvanIV",
+# T1 (Blue Team 2) - 3 picks locked, 2 open (TOP & Mid)
+GAME_4_T1_LOCKED = {
+     #"TOP": "is open",
+    "JUNGLE": "Nocturne",
      # "MID": is open
-    "BOT": "Sivir",
-    "SUPPORT": "Lulu",
+    "BOT": "Kalista",
+    "SUPPORT": "Renata",
    
 }
 
 # Actual picks that were made
-GAME_2_KT_ACTUAL = {
-    "BOT": "Ezreal",
-    "MID": "Mel"
+GAME_4_KT_ACTUAL = {
+    "TOP": "Mordekaiser"
 }
 
-GAME_2_T1_ACTUAL = {
-    "Mid": "Sylas"
+GAME_4_T1_ACTUAL = {
+    "TOP": "Gragas",
+    "MID": "Anivia"
 }
 
 
@@ -91,63 +94,72 @@ def normalize_champion_list(champ_list):
     return [normalize_champion_name(c) for c in champ_list if normalize_champion_name(c)]
 
 
-def create_game2_draft_state():
-    """Create draft state for Game 1."""
+def create_game4_draft_state():
+    """Create draft state for Game 4.
+    T1 is Blue Team (team2), KT is Red Team (team1).
+    Blue picks JUNGLE + MID, Red picks MID.
+    """
     load_champion_name_map()
     
     # Normalize bans
-    normalized_bans = normalize_champion_list(GAME_2_BANS)
+    normalized_bans = normalize_champion_list(GAME_4_BANS)
     
     # Normalize locked picks
+    # KT is Red Team (team1)
     normalized_kt = {}
-    for role, champ in GAME_2_KT_LOCKED.items():
+    for role, champ in GAME_4_KT_LOCKED.items():
         normalized = normalize_champion_name(champ)
         if normalized:
             normalized_kt[role] = normalized
     
+    # T1 is Blue Team (team2)
     normalized_t1 = {}
-    for role, champ in GAME_2_T1_LOCKED.items():
+    for role, champ in GAME_4_T1_LOCKED.items():
         normalized = normalize_champion_name(champ)
         if normalized:
             normalized_t1[role] = normalized
     
     # Create draft state
+    # team1 = KT (Red), team2 = T1 (Blue)
     draft = create_draft_from_scenario(
         bans=normalized_bans,
-        team1_picks=normalized_kt,
-        team1_last_role="BOT",  # Actually 2 open roles (MID and BOT), but we'll handle separately
-        team2_picks=normalized_t1,
-        team2_last_role="MID"  # Red picks MID last
+        team1_picks=normalized_kt,  # KT (Red)
+        team1_last_role="MID",  # Red picks MID last
+        team2_picks=normalized_t1,  # T1 (Blue)
+        team2_last_role="MID"  # Blue picks JUNGLE + MID (we'll handle JUNGLE separately)
     )
     
     return draft
 
 
 def run_nash_equilibrium_analysis():
-    """Run Nash equilibrium analysis for Game 2."""
+    """Run Nash equilibrium analysis for Game 4.
+    T1 is Blue Team, KT is Red Team.
+    Blue picks JUNGLE + MID, Red picks MID (effective focus is on MID vs MID with Cassiopeia locked).
+    """
     print("=" * 70)
-    print("GAME 2 NASH EQUILIBRIUM ANALYSIS")
+    print("GAME 4 NASH EQUILIBRIUM ANALYSIS")
     print("=" * 70)
     
     # Create draft state
-    draft = create_game2_draft_state()
+    draft = create_game4_draft_state()
     
     print("\n" + "=" * 70)
     print("CURRENT DRAFT STATE")
     print("=" * 70)
     print(f"\nBans ({len(draft.bans)}): {', '.join(draft.bans)}")
     
-    print(f"\n{TEAM_1['name']} (Blue) - Locked Picks:")
+    print(f"\n{TEAM_2['name']} (Blue/T1) - Locked Picks:")
     for role in ROLE_ORDER:
-        champ = draft.team1_picks.get(role)
+        champ = draft.team2_picks.get(role)
         if champ:
             print(f"  {role:<8}: {champ}")
         else:
             print(f"  {role:<8}: [OPEN]")
     
-    print(f"\n{TEAM_2['name']} (Red) - Locked Picks:")
+    print(f"\n{TEAM_1['name']} (Red/KT) - Locked Picks:")
     for role in ROLE_ORDER:
-        champ = draft.team2_picks.get(role)
+        champ = draft.team1_picks.get(role)
         if champ:
             print(f"  {role:<8}: {champ}")
         else:
@@ -203,24 +215,26 @@ def run_nash_equilibrium_analysis():
     scorer._debug_matchups = False
     
     # Get player names
+    # T1 is Blue (team2), KT is Red (team1)
     blue_players = [
-        TEAM_1['players']['TOP'],
-        TEAM_1['players']['JUNGLE'],
-        TEAM_1['players']['MID'],
-        TEAM_1['players']['BOT'],
-        TEAM_1['players']['SUPPORT']
-    ]
-    red_players = [
         TEAM_2['players']['TOP'],
         TEAM_2['players']['JUNGLE'],
         TEAM_2['players']['MID'],
         TEAM_2['players']['BOT'],
         TEAM_2['players']['SUPPORT']
     ]
+    red_players = [
+        TEAM_1['players']['TOP'],
+        TEAM_1['players']['JUNGLE'],
+        TEAM_1['players']['MID'],
+        TEAM_1['players']['BOT'],
+        TEAM_1['players']['SUPPORT']
+    ]
     
     # Convert draft state to team lists (with None for open slots)
-    blue_team = [draft.team1_picks.get(role) for role in ROLE_ORDER]
-    red_team = [draft.team2_picks.get(role) for role in ROLE_ORDER]
+    # T1 is Blue (team2), KT is Red (team1)
+    blue_team = [draft.team2_picks.get(role) for role in ROLE_ORDER]
+    red_team = [draft.team1_picks.get(role) for role in ROLE_ORDER]
     
     print("\n" + "=" * 70)
     print("RUNNING NASH EQUILIBRIUM ANALYSIS")
@@ -228,7 +242,7 @@ def run_nash_equilibrium_analysis():
     print("\nFinding optimal picks using backward induction...")
     print("(This may take a few minutes)\n")
     
-    # Draft order: Blue picks 2 (MID and BOT), then Red picks 1 (MID)
+    # Draft order: Blue picks 2 (JUNGLE and MID), then Red picks 1 (MID)
     draft_order = ['blue', 'blue', 'red']
     
     # Ensure caching is enabled (already enabled in constructor, but double-check)
@@ -238,31 +252,27 @@ def run_nash_equilibrium_analysis():
     spne.champion_data_cache.clear()
     spne.calculation_count = 0
     
-    # Count how many MID champions are available for Red's pick
-    # Restrict to scenario's extended MID pool
-    mid_champions = [c for c in EXTENDED_CHAMPION_POOL["MID"] if c in available]
+    # Count how many TOP champions are available for each side's open TOP pick
+    # Restrict to scenario's extended TOP pool
+    top_champions_blue = [c for c in EXTENDED_CHAMPION_POOL["TOP"] if c in available]
+    top_champions_red = [c for c in EXTENDED_CHAMPION_POOL["TOP"] if c in available]
     
-    # Count how many MID and BOT champions are available for Blue's picks
-    # Restrict to scenario pools for MID and BOT
+    # Count how many MID champions are available for Blue's open MID pick
+    # Restrict Blue MID choices to scenario's extended MID pool
     mid_champions_blue = [c for c in EXTENDED_CHAMPION_POOL["MID"] if c in available]
-    bot_champions = [c for c in EXTENDED_CHAMPION_POOL["BOT"] if c in available]
-    
+
     print(f"Starting fresh SPNE calculation...")
-    print(f"  Beam width: {spne.beam_width} (set high to prevent pruning - we only have ~{len(mid_champions_blue) * len(bot_champions)} Blue combinations)")
+    print(f"  Beam width: {spne.beam_width} (set high to prevent pruning - we only have ~{len(top_champions_blue) * len(mid_champions_blue)} Blue TOP+MID combinations)")
     print(f"  Fast heuristic: {spne.fast_heuristic}")
     print(f"  Memoization: {spne.use_memoization}")
     print(f"  Available champions: {len(available)}")
     print(f"  Max depth: 3 (Blue picks 2, Red picks 1)")
-    print(f"  Available MID champions for Red: {len(mid_champions)}")
+    print(f"  Available TOP champions for Blue: {len(top_champions_blue)}")
     print(f"  Available MID champions for Blue: {len(mid_champions_blue)}")
-    print(f"  Available BOT champions for Blue: {len(bot_champions)}")
-    print(f"  Total combinations Blue can pick: {len(mid_champions_blue) * len(bot_champions)}")
-    print(f"  Expected calculations: ~{len(mid_champions_blue) * len(bot_champions) * len(mid_champions)} (all combinations)")
-    print(f"  NOTE: With beam_width={spne.beam_width}, all {len(mid_champions_blue) * len(bot_champions)} Blue combinations should be explored")
-    
-   
-    
-    print(f"  Mid champions: {', '.join(mid_champions[:10])}{'...' if len(mid_champions) > 10 else ''}")
+    print(f"  Available TOP champions for Red: {len(top_champions_red)}")
+    print(f"  Total combinations Blue can pick: {len(top_champions_blue) * len(mid_champions_blue)}")
+    print(f"  Expected calculations: ~{len(top_champions_blue) * len(mid_champions_blue) * len(top_champions_red)} (all combinations)")
+    print(f"  NOTE: With beam_width={spne.beam_width}, all {len(top_champions_blue) * len(mid_champions_blue)} Blue TOP+MID combinations should be explored")
     
     try:
         # ========================================================================
@@ -276,9 +286,9 @@ def run_nash_equilibrium_analysis():
         # For now, set placeholders that will be updated
         optimal_blue = blue_team.copy()
         optimal_red = red_team.copy()
-        optimal_kt_mid = None
-        optimal_kt_bot = None
+        optimal_t1_jungle = None
         optimal_t1_mid = None
+        optimal_kt_mid = None
         optimal_red_team = red_team.copy()
         
         print("Optimal picks will be determined in STEP 1.5 using minimax calculation...")
@@ -292,25 +302,25 @@ def run_nash_equilibrium_analysis():
         print("\n" + "=" * 70)
         print("STEP 1.5: VERIFYING BLUE'S OPTIMAL PICKS")
         print("=" * 70)
-        print(f"Testing ALL Blue combinations (MID + BOT) to verify optimal picks...\n")
+        print(f"Testing ALL Blue combinations (TOP + MID) to verify optimal picks...\n")
         
-        # Get all valid MID and BOT champions from the scenario pools
+        # Get all valid TOP and MID champions from scenario pools
+        valid_top_champions = []
         valid_mid_champions = []
-        valid_bot_champions = []
-        # MIDs
+        # TOP (Blue)
+        for champ in EXTENDED_CHAMPION_POOL["TOP"]:
+            if champ in draft.bans or champ not in available:
+                continue
+            valid_top_champions.append(champ)
+        # MID (Blue)
         for champ in EXTENDED_CHAMPION_POOL["MID"]:
             if champ in draft.bans or champ not in available:
                 continue
             valid_mid_champions.append(champ)
-        # BOTs
-        for champ in EXTENDED_CHAMPION_POOL["BOT"]:
-            if champ in draft.bans or champ not in available:
-                continue
-            valid_bot_champions.append(champ)
         
+        print(f"Found {len(valid_top_champions)} valid TOP champions (scenario pool)")
         print(f"Found {len(valid_mid_champions)} valid MID champions (scenario pool)")
-        print(f"Found {len(valid_bot_champions)} valid BOT champions (scenario pool)")
-        print(f"Total combinations to test: {len(valid_mid_champions) * len(valid_bot_champions)}\n")
+        print(f"Total combinations to test: {len(valid_top_champions) * len(valid_mid_champions)}\n")
         
         # DON'T clear cache - reuse it to avoid duplicate API calls
         print(f"Cache status: {len(spne.payoff_cache)} entries (will reuse to avoid duplicate API calls)")
@@ -348,28 +358,28 @@ def run_nash_equilibrium_analysis():
         print(f"Pre-calculated {len(locked_matchups)} locked role matchups")
         print(f"Matchup cache now has {len(spne.scorer.matchup_cache)} entries")
         
-        # OPTIMIZATION: Pre-calculate Sivir vs all Blue BOT champions
-        # We'll invert the winrate when we need BOT vs Sivir
-        sivir_champ = red_team[3]  # Sivir is Red's locked BOT
-        print(f"\nPre-calculating {sivir_champ} vs all {len(valid_bot_champions)} Blue BOT champions...")
-        print(f"  This will make {len(valid_bot_champions)} API calls, then we'll invert for BOT vs Sivir")
+        # OPTIMIZATION: Pre-calculate Cassiopeia vs all Blue MID champions
+        # We'll reuse these when evaluating MID lane matchups (Blue MID vs Cassiopeia)
+        cassio_champ = red_team[2]  # Cassiopeia is Red's locked MID
+        print(f"\nPre-calculating {cassio_champ} vs all {len(valid_mid_champions)} Blue MID champions...")
+        print(f"  This will make {len(valid_mid_champions)} API calls for MID vs Cassiopeia")
         
-        sivir_vs_bot_matchups = {}
-        successful_sivir_matchups = 0
-        with tqdm(total=len(valid_bot_champions), desc="Pre-calc Sivir vs BOT", unit="champ") as pbar:
-            for bot_champ in sorted(valid_bot_champions):
-                # Get Sivir vs BOT winrate (this populates the cache)
-                wr = spne.scorer.get_champion_matchup_winrate(sivir_champ, bot_champ, 'adc')
-                sivir_vs_bot_matchups[bot_champ] = wr
+        cassio_vs_mid_matchups = {}
+        successful_cassio_matchups = 0
+        with tqdm(total=len(valid_mid_champions), desc="Pre-calc Cassio vs MID", unit="champ") as pbar:
+            for mid_champ in sorted(valid_mid_champions):
+                # Get Blue MID vs Cassiopeia winrate (this populates the cache)
+                wr = spne.scorer.get_champion_matchup_winrate(mid_champ, cassio_champ, 'mid')
+                cassio_vs_mid_matchups[mid_champ] = wr
                 if wr is not None:
-                    successful_sivir_matchups += 1
+                    successful_cassio_matchups += 1
                 pbar.update(1)
                 if wr is not None:
-                    pbar.set_postfix({'last': f"{bot_champ}: {wr:.2%}", 'cache': len(spne.scorer.matchup_cache)})
+                    pbar.set_postfix({'last': f"{mid_champ}: {wr:.2%}", 'cache': len(spne.scorer.matchup_cache)})
         
-        print(f"Pre-calculated {successful_sivir_matchups}/{len(valid_bot_champions)} Sivir vs BOT matchups (cache now has {len(spne.scorer.matchup_cache)} entries)")
+        print(f"Pre-calculated {successful_cassio_matchups}/{len(valid_mid_champions)} MID vs Cassio matchups (cache now has {len(spne.scorer.matchup_cache)} entries)")
         
-        # Get all valid MID champions for Red (needed for calculations)
+        # Get all valid TOP champions for Red (needed for calculations)
         all_picked = []
         for role in ROLE_ORDER:
             if draft.team1_picks.get(role):
@@ -378,175 +388,176 @@ def run_nash_equilibrium_analysis():
                 all_picked.append(draft.team2_picks[role])
         
         taken = set(draft.bans + all_picked)
-        valid_mid_champions_red = []
+        valid_top_champions_red = []
         seen_champs = set()  # Track to avoid duplicates
-        # Check only champions in scenario's extended MID pool
-        for champ in EXTENDED_CHAMPION_POOL["MID"]:
+        # Check only champions in scenario's extended TOP pool
+        for champ in EXTENDED_CHAMPION_POOL["TOP"]:
             if champ in taken or champ in seen_champs:
                 continue
-            valid_mid_champions_red.append(champ)
+            valid_top_champions_red.append(champ)
             seen_champs.add(champ)
         
-        print(f"Found {len(valid_mid_champions_red)} valid MID champions for Red (scenario pool)")
+        print(f"Found {len(valid_top_champions_red)} valid TOP champions for Red (scenario pool)")
         
         # VERIFY: Test that cache is working for a few matchups
         print(f"\nVerifying cache integration...")
         test_cache_hits = 0
         test_cache_misses = 0
         
-        # Test BOT vs Sivir (should be cached via inversion)
-        test_bot = valid_bot_champions[0] if valid_bot_champions else None
-        if test_bot:
+        # Test MID vs Cassiopeia (should be cached)
+        test_mid = valid_mid_champions[0] if valid_mid_champions else None
+        if test_mid:
             cache_before = len(spne.scorer.matchup_cache)
-            wr_test = spne.scorer.get_champion_matchup_winrate(test_bot, sivir_champ, 'adc')
+            wr_test = spne.scorer.get_champion_matchup_winrate(test_mid, cassio_champ, 'mid')
             cache_after = len(spne.scorer.matchup_cache)
             if cache_after == cache_before:
                 test_cache_hits += 1
-                print(f"  ✓ {test_bot} vs Sivir (BOT): CACHE HIT (inverted)")
+                print(f"  ✓ {test_mid} vs {cassio_champ} (MID): CACHE HIT")
             else:
                 test_cache_misses += 1
-                print(f"  ✗ {test_bot} vs Sivir (BOT): CACHE MISS (unexpected!)")
+                print(f"  ✗ {test_mid} vs {cassio_champ} (MID): CACHE MISS (unexpected!)")
         
         if test_cache_misses == 0:
             print(f"  ✓ All pre-calculated matchups are properly cached and will be reused!")
         else:
             print(f"  ⚠ Warning: {test_cache_misses} cache miss(es) detected - some matchups may not be cached correctly")
         
-        print(f"\nTotal calculations needed: {len(valid_mid_champions) * len(valid_bot_champions) * len(valid_mid_champions_red)}")
-        print(f"  ({len(valid_mid_champions)} MID × {len(valid_bot_champions)} BOT × {len(valid_mid_champions_red)} MID)")
-        print(f"  Expected cache hits: All locked roles (TOP, JUNGLE, SUPPORT), all BOT vs Sivir (inverted)")
-        print(f"  Expected new API calls: MID vs MID matchups (both sides are variable, cannot pre-calc)\n")
+        print(f"\nTotal calculations needed: {len(valid_top_champions) * len(valid_mid_champions) * len(valid_top_champions_red)}")
+        print(f"  ({len(valid_top_champions)} TOP × {len(valid_mid_champions)} MID × {len(valid_top_champions_red)} TOP)")
+        print(f"  Expected cache hits: All locked roles (JUNGLE, BOT, SUPPORT), all MID vs Cassiopeia")
+        print(f"  Expected new API calls: TOP vs TOP matchups across all combinations\n")
         
         blue_combinations = []
         
         print("=" * 70)
-        print("ALL BLUE COMBINATIONS (MID + BOT):")
+        print("ALL BLUE COMBINATIONS (TOP + MID):")
         print("=" * 70)
         
         # Calculate total combinations
         total_combos = 0
-        for mid_champ in sorted(valid_mid_champions):
-            for bot_champ in sorted(valid_bot_champions):
-                if mid_champ != bot_champ:
+        for top_champ in sorted(valid_top_champions):
+            for mid_champ in sorted(valid_mid_champions):
+                if top_champ != mid_champ:
                     total_combos += 1
         
-        print(f"Calculating {total_combos} Blue combinations × {len(valid_mid_champions_red)} Red MID picks...")
-        print(f"Total calculations: {total_combos * len(valid_mid_champions_red)}")
+        print(f"Calculating {total_combos} Blue TOP+MID choices × {len(valid_top_champions_red)} Red TOP picks...")
+        print(f"Total calculations: {total_combos * len(valid_top_champions_red)}")
         print(f"Cache will prevent duplicate API calls for same team matchups\n")
         
         combo_count = 0
         seen_combos = set()  # Track combinations to avoid duplicates
         
         # Progress bar for Blue combinations
-        mid_bot_combos = []
-        for mid_champ in sorted(valid_mid_champions):
-            for bot_champ in sorted(valid_bot_champions):
-                if mid_champ != bot_champ:
-                    mid_bot_combos.append((mid_champ, bot_champ))
+        top_mid_combos = []
+        for top_champ in sorted(valid_top_champions):
+            for mid_champ in sorted(valid_mid_champions):
+                if top_champ != mid_champ:
+                    top_mid_combos.append((top_champ, mid_champ))
         
         # Calculate all Blue combinations (no progress bar - should be fast with caching)
-        for mid_champ, bot_champ in mid_bot_combos:
+        for top_champ, mid_champ in top_mid_combos:
             # Check for duplicate combinations
-            combo_key = (mid_champ, bot_champ)
+            combo_key = (top_champ, mid_champ)
             if combo_key in seen_combos:
                 continue
             seen_combos.add(combo_key)
             
             combo_count += 1
             test_blue = blue_team.copy()
-            test_blue[2] = mid_champ  # MID
-            test_blue[3] = bot_champ  # BOT
+            test_blue[0] = top_champ   # TOP
+            test_blue[2] = mid_champ   # MID
             
-            # For each Blue combination, test ALL Red MID picks and find the minimum payoff
-            # (Red will pick the MID that minimizes Blue's payoff)
-            best_red_mid_for_combo = None
+            # For each Blue combination, test ALL Red TOP picks and find the minimum payoff
+            # (Red will pick the TOP that minimizes Blue's payoff)
+            best_red_top_for_combo = None
             best_payoff_for_combo = float('inf')  # Red wants minimum (most negative)
             all_red_responses = []  # Track all Red responses for this Blue combo
             
-            # Test ALL Red MID picks for this Blue combination
-            for red_mid_champ in sorted(valid_mid_champions_red):
+            # Test ALL Red TOP picks for this Blue combination
+            for red_top_champ in sorted(valid_top_champions_red):
                 # Can't pick same champion that Blue already has
-                if red_mid_champ in test_blue:
+                if red_top_champ in test_blue:
                     continue
                 
                 # Double-check: make sure champion isn't None or already picked
-                if not red_mid_champ or red_mid_champ in draft.bans:
+                if not red_top_champ or red_top_champ in draft.bans:
                     continue
                 
                 test_red = red_team.copy()
-                test_red[2] = red_mid_champ  # MID
+                test_red[0] = red_top_champ  # TOP
                 
                 test_payoff = spne.calculate_payoff(
                     test_blue, test_red,
                     blue_players, red_players, 'na1', use_fast_mode=False
                 )
                 
-                all_red_responses.append((red_mid_champ, test_payoff))
+                all_red_responses.append((red_top_champ, test_payoff))
                 
                 # Red wants the MINIMUM payoff (most negative)
                 if test_payoff < best_payoff_for_combo:
                     best_payoff_for_combo = test_payoff
-                    best_red_mid_for_combo = red_mid_champ
+                    best_red_top_for_combo = red_top_champ
             
             # The payoff for this Blue combination is the minimum (Red's best response)
             test_payoff = best_payoff_for_combo
             
             # Blue gets alpha bonus
-            kt_win = 1 / (1 + math.exp(-(test_payoff + alpha)))
-            blue_combinations.append((mid_champ, bot_champ, test_payoff, kt_win, best_red_mid_for_combo))
+            t1_win = 1 / (1 + math.exp(-(test_payoff + alpha)))
+            # JUNGLE is fixed for all combos in Game 4
+            blue_combinations.append((top_champ, mid_champ, test_payoff, t1_win, best_red_top_for_combo))
         
         # Sort by payoff (descending - highest first = best for Blue)
         blue_combinations.sort(key=lambda x: x[2], reverse=True)
         
         # VERIFY: The minimax best combination should match SPNE
         minimax_best = blue_combinations[0]  # Highest payoff
-        minimax_mid, minimax_bot, minimax_payoff, minimax_win, minimax_red_mid = minimax_best
+        minimax_jungle, minimax_mid, minimax_payoff, minimax_win, minimax_red_mid = minimax_best
         
         # Now print the table with SPNE marked
-        print(f"\n{'MID':<20} {'BOT':<20} {'Payoff':>12} {'KT Win%':>10} {'Red Best MID':<20} {'Status':<20}")
+        print(f"\n{'JUNGLE':<20} {'MID':<20} {'Payoff':>12} {'T1 Win%':>10} {'Red Best MID':<20} {'Status':<20}")
         print("-" * 90)
         
-        for mid_champ, bot_champ, test_payoff, kt_win, best_red_mid_for_combo in blue_combinations:
+        for jungle_champ, mid_champ, test_payoff, t1_win, best_red_mid_for_combo in blue_combinations:
             # Determine status (mark SPNE - the one with highest payoff)
             status = ""
-            if mid_champ == minimax_mid and bot_champ == minimax_bot:
+            if jungle_champ == minimax_jungle and mid_champ == minimax_mid:
                 status = " [SPNE]"
             
             # Format payoff
             payoff_str = f"{test_payoff:>+12.4f}"
             
             red_mid_str = best_red_mid_for_combo if best_red_mid_for_combo else "N/A"
-            print(f"{mid_champ:<20} {bot_champ:<20} {payoff_str:>30} {kt_win:>9.2%} {red_mid_str:<20} {status}")
+            print(f"{jungle_champ:<20} {mid_champ:<20} {payoff_str:>30} {t1_win:>9.2%} {red_mid_str:<20} {status}")
         
         print(f"\n{'='*70}")
         print("STEP 1 RESULT: SPNE")
         print("=" * 70)
         print(f"SPNE (tests ALL {len(blue_combinations)} combinations):")
-        print(f"  Optimal Blue picks: MID={minimax_mid}, BOT={minimax_bot}, Payoff={minimax_payoff:+.4f} [SPNE]")
-        print(f"  Red's best response: {minimax_red_mid}")
-        print(f"  KT Win Rate: {minimax_win:.2%}")
+        print(f"  Optimal Blue picks: TOP={minimax_jungle}, MID={minimax_mid}, Payoff={minimax_payoff:+.4f} [SPNE]")
+        print(f"  Red's best TOP response: {minimax_red_mid}")
+        print(f"  T1 Win Rate: {minimax_win:.2%}")
         print(f"{'='*70}")
         
         # Update optimal picks to use minimax result
-        optimal_kt_mid = minimax_mid
-        optimal_kt_bot = minimax_bot
+        optimal_t1_top = minimax_jungle
+        optimal_t1_mid = minimax_mid
+        optimal_kt_top = minimax_red_mid
+        optimal_blue[0] = minimax_jungle
         optimal_blue[2] = minimax_mid
-        optimal_blue[3] = minimax_bot
-        optimal_red[2] = minimax_red_mid
-        optimal_red_team[2] = minimax_red_mid
-        optimal_t1_mid = minimax_red_mid
+        optimal_red[0] = minimax_red_mid
+        optimal_red_team[0] = minimax_red_mid
         
-        print(f"\n{TEAM_1['name']} (Blue) - Optimal Picks (from Minimax):")
+        print(f"\n{TEAM_2['name']} (Blue/T1) - Optimal Picks (from Minimax):")
         for i, role in enumerate(ROLE_ORDER):
             champ = optimal_blue[i] if i < len(optimal_blue) else None
-            is_new = champ and champ != draft.team1_picks.get(role)
+            is_new = champ and champ != draft.team2_picks.get(role)
             marker = " [OPTIMAL]" if is_new else ""
             print(f"  {role:<8}: {champ}{marker}")
         
-        print(f"\n{TEAM_2['name']} (Red) - Optimal Response (from Minimax):")
+        print(f"\n{TEAM_1['name']} (Red/KT) - Optimal Response (from Minimax):")
         for i, role in enumerate(ROLE_ORDER):
             champ = optimal_red[i] if i < len(optimal_red) else None
-            is_new = champ and champ != draft.team2_picks.get(role)
+            is_new = champ and champ != draft.team1_picks.get(role)
             marker = " [OPTIMAL]" if is_new else ""
             print(f"  {role:<8}: {champ}{marker}")
         
@@ -570,19 +581,19 @@ def run_nash_equilibrium_analysis():
         print("SUMMARY - TOP 10 BEST COMBINATIONS FOR BLUE:")
         print("=" * 70)
         for i, combo in enumerate(blue_combinations[:10]):
-            mid, bot, payoff, win, red_mid = combo
-            marker = " [SPNE]" if mid == optimal_kt_mid and bot == optimal_kt_bot else ""
+            top, mid, payoff, win, red_top = combo
+            marker = " [SPNE]" if top == optimal_t1_top and mid == optimal_t1_mid else ""
             advantage = "Blue advantage" if payoff > 0 else "Red advantage"
-            print(f"  {i+1:2d}. MID={mid:<15} BOT={bot:<15} Payoff={payoff:>+10.4f} ({advantage}), KT Win={win:>6.2%}, Red MID={red_mid}{marker}")
+            print(f"  {i+1:2d}. TOP={top:<15} MID={mid:<15} Payoff={payoff:>+10.4f} ({advantage}), T1 Win={win:>6.2%}, Red TOP={red_top}{marker}")
         
         print(f"\n{'='*70}")
-        print(f"BLUE'S BEST COMBINATION (SPNE): MID={minimax_mid}, BOT={minimax_bot}")
-        print(f"  Red's optimal MID response: {minimax_red_mid}")
+        print(f"BLUE'S BEST COMBINATION (SPNE): TOP={minimax_jungle}, MID={minimax_mid}")
+        print(f"  Red's optimal TOP response: {minimax_red_mid}")
         print(f"  Payoff: {minimax_payoff:+.4f}")
-        print(f"  KT Win Rate: {minimax_win:.2%}")
+        print(f"  T1 Win Rate: {minimax_win:.2%}")
         print(f"{'='*70}")
         print(f"\nTotal calculations for Blue combinations: {spne.calculation_count:,}")
-        print(f"  Formula: {len(valid_mid_champions)} MID × {len(valid_bot_champions)} BOT × {len(valid_mid_champions_red)} MID = {len(valid_mid_champions) * len(valid_bot_champions) * len(valid_mid_champions_red)} total")
+        print(f"  Formula: {len(valid_top_champions)} TOP × {len(valid_mid_champions)} MID × {len(valid_top_champions_red)} TOP = {len(valid_top_champions) * len(valid_mid_champions) * len(valid_top_champions_red)} total")
         
         # ========================================================================
         # STEP 2: Get Blue's actual picks
@@ -593,24 +604,25 @@ def run_nash_equilibrium_analysis():
         
         # Normalize actual picks
         load_champion_name_map()
-        kt_actual_mid = normalize_champion_name(GAME_2_KT_ACTUAL["MID"])
-        kt_actual_bot = normalize_champion_name(GAME_2_KT_ACTUAL["BOT"])
-        t1_actual_mid = normalize_champion_name(GAME_2_T1_ACTUAL["Mid"])
+        # Jungle and Cassiopeia MID are locked; only T1 TOP+MID and KT TOP actually change
+        t1_actual_top = normalize_champion_name(GAME_4_T1_ACTUAL["TOP"])
+        t1_actual_mid = normalize_champion_name(GAME_4_T1_ACTUAL["MID"])
+        kt_actual_top = normalize_champion_name(GAME_4_KT_ACTUAL["TOP"])
         
         actual_blue_team = blue_team.copy()
-        actual_blue_team[2] = kt_actual_mid  # MID
-        actual_blue_team[3] = kt_actual_bot  # BOT
+        actual_blue_team[0] = t1_actual_top  # TOP
+        actual_blue_team[2] = t1_actual_mid  # MID
         
-        print(f"\n{TEAM_1['name']} (Blue) - Actual Picks:")
-        print(f"  MID:     {kt_actual_mid}")
-        print(f"  BOT:     {kt_actual_bot}")
+        print(f"\n{TEAM_2['name']} (Blue/T1) - Actual Picks:")
+        print(f"  TOP:     {t1_actual_top}")
+        print(f"  MID:     {t1_actual_mid}")
         
         # Build team combinations
         optimal_blue_team = optimal_blue.copy()
         optimal_red_team = optimal_red.copy()
         
         actual_red_team = red_team.copy()
-        actual_red_team[2] = t1_actual_mid  # MID
+        actual_red_team[0] = kt_actual_top  # TOP
         
         alpha = 0.02
         
@@ -620,10 +632,10 @@ def run_nash_equilibrium_analysis():
         print("=" * 70)
         
         scenarios = [
-            (f"Optimal ({optimal_kt_mid}, {optimal_kt_bot}) vs Optimal ({optimal_t1_mid})", optimal_blue_team, optimal_red_team),
-            (f"Actual ({kt_actual_mid}, {kt_actual_bot}) vs Actual ({t1_actual_mid})", actual_blue_team, actual_red_team),
-            (f"Optimal ({optimal_kt_mid}, {optimal_kt_bot}) vs Actual ({t1_actual_mid})", optimal_blue_team, actual_red_team),
-            (f"Actual ({kt_actual_mid}, {kt_actual_bot}) vs Optimal ({optimal_t1_mid})", actual_blue_team, optimal_red_team),
+            (f"Optimal ({optimal_t1_top}, {optimal_t1_mid}) vs Optimal ({optimal_kt_top})", optimal_blue_team, optimal_red_team),
+            (f"Actual ({t1_actual_top}, {t1_actual_mid}) vs Actual ({kt_actual_top})", actual_blue_team, actual_red_team),
+            (f"Optimal ({optimal_t1_top}, {optimal_t1_mid}) vs Actual ({kt_actual_top})", optimal_blue_team, actual_red_team),
+            (f"Actual ({t1_actual_top}, {t1_actual_mid}) vs Optimal ({optimal_kt_top})", actual_blue_team, optimal_red_team),
         ]
         
         results = []
@@ -636,9 +648,10 @@ def run_nash_equilibrium_analysis():
             red_win = 1 - blue_win
             results.append((name, payoff, blue_win, red_win))
         
-        print(f"\n{'Scenario':<25} {'Payoff':>10} {'KT Win%':>10} {'T1 Win%':>10}")
+        print(f"\n{'Scenario':<25} {'Payoff':>10} {'T1 Win%':>10} {'KT Win%':>10}")
         print("-" * 60)
         for name, payoff, blue_win, red_win in results:
+            # blue_win = T1 (Blue), red_win = KT (Red)
             print(f"{name:<25} {payoff:>+10.4f} {blue_win:>9.1%} {red_win:>9.1%}")
         
         # Detailed breakdown
@@ -646,12 +659,12 @@ def run_nash_equilibrium_analysis():
         print("DETAILED COMPARISON")
         print("=" * 70)
         
-        print(f"\n{TEAM_1['name']} (Blue) Last Picks:")
-        print(f"  MID:     Actual={kt_actual_mid}, Optimal={optimal_kt_mid}, Match={kt_actual_mid == optimal_kt_mid}")
-        print(f"  BOT:     Actual={kt_actual_bot}, Optimal={optimal_kt_bot}, Match={kt_actual_bot == optimal_kt_bot}")
-        
-        print(f"\n{TEAM_2['name']} (Red) Last Pick:")
+        print(f"\n{TEAM_2['name']} (Blue/T1) Last Picks:")
+        print(f"  TOP:     Actual={t1_actual_top}, Optimal={optimal_t1_top}, Match={t1_actual_top == optimal_t1_top}")
         print(f"  MID:     Actual={t1_actual_mid}, Optimal={optimal_t1_mid}, Match={t1_actual_mid == optimal_t1_mid}")
+        
+        print(f"\n{TEAM_1['name']} (Red/KT) Last Pick:")
+        print(f"  TOP:     Actual={kt_actual_top}, Optimal={optimal_kt_top}, Match={kt_actual_top == optimal_kt_top}")
         
         # Analyze each scenario
         opt_vs_opt = results[0]
@@ -663,25 +676,25 @@ def run_nash_equilibrium_analysis():
         print("ANALYSIS")
         print("=" * 70)
         
-        print(f"\n1. Optimal ({optimal_kt_mid}, {optimal_kt_bot}) vs Optimal ({optimal_t1_mid}) (SPNE):")
-        print(f"   Payoff: {opt_vs_opt[1]:+.4f}, KT: {opt_vs_opt[2]:.1%}, T1: {opt_vs_opt[3]:.1%}")
+        print(f"\n1. Optimal ({optimal_t1_top}, {optimal_t1_mid}) vs Optimal ({optimal_kt_top}) (SPNE):")
+        print(f"   Payoff: {opt_vs_opt[1]:+.4f}, T1: {opt_vs_opt[2]:.1%}, KT: {opt_vs_opt[3]:.1%}")
         
-        print(f"\n2. Actual ({kt_actual_mid}, {kt_actual_bot}) vs Actual ({t1_actual_mid}) (What happened):")
-        print(f"   Payoff: {actual_vs_actual[1]:+.4f}, KT: {actual_vs_actual[2]:.1%}, T1: {actual_vs_actual[3]:.1%}")
+        print(f"\n2. Actual ({t1_actual_top}, {t1_actual_mid}) vs Actual ({kt_actual_top}) (What happened):")
+        print(f"   Payoff: {actual_vs_actual[1]:+.4f}, T1: {actual_vs_actual[2]:.1%}, KT: {actual_vs_actual[3]:.1%}")
         diff_actual = actual_vs_actual[1] - opt_vs_opt[1]
         if abs(diff_actual) < 0.01:
             print(f"   -> Actual outcome matches optimal outcome!")
         elif diff_actual > 0:
-            print(f"   -> Actual outcome is {diff_actual:+.4f} better for KT than optimal")
+            print(f"   -> Actual outcome is {diff_actual:+.4f} better for T1 than optimal")
         else:
-            print(f"   -> Optimal would be {abs(diff_actual):+.4f} better for KT than actual")
+            print(f"   -> Optimal would be {abs(diff_actual):+.4f} better for T1 than actual")
         
-        print(f"\n3. Optimal ({optimal_kt_mid}, {optimal_kt_bot}) vs Actual ({t1_actual_mid}) (If Blue optimal, Red actual):")
-        print(f"   Payoff: {opt_vs_actual[1]:+.4f}, KT: {opt_vs_actual[2]:.1%}, T1: {opt_vs_actual[3]:.1%}")
+        print(f"\n3. Optimal ({optimal_t1_top}, {optimal_t1_mid}) vs Actual ({kt_actual_top}) (If Blue optimal, Red actual):")
+        print(f"   Payoff: {opt_vs_actual[1]:+.4f}, T1: {opt_vs_actual[2]:.1%}, KT: {opt_vs_actual[3]:.1%}")
         print(f"   -> Shows value of Blue's optimal picks when Red doesn't respond optimally")
         
-        print(f"\n4. Actual ({kt_actual_mid}, {kt_actual_bot}) vs Optimal ({optimal_t1_mid}) (If Blue actual, Red optimal response):")
-        print(f"   Payoff: {actual_vs_opt[1]:+.4f}, KT: {actual_vs_opt[2]:.1%}, T1: {actual_vs_opt[3]:.1%}")
+        print(f"\n4. Actual ({t1_actual_top}, {t1_actual_mid}) vs Optimal ({optimal_kt_top}) (If Blue actual, Red optimal response):")
+        print(f"   Payoff: {actual_vs_opt[1]:+.4f}, T1: {actual_vs_opt[2]:.1%}, KT: {actual_vs_opt[3]:.1%}")
         print(f"   -> Shows how Red's optimal response performs against Blue's actual picks")
         
         # ========================================================================
@@ -695,29 +708,29 @@ def run_nash_equilibrium_analysis():
         # Cache is keyed by team composition, so it will automatically reuse previous calculations
         print(f"Cache status: {len(spne.payoff_cache)} entries (will reuse to avoid duplicate API calls)")
         
-        t1_best_response_to_optimal = None
-        best_t1_payoff_to_optimal = float('inf')  # Red wants MINIMUM payoff (most negative = best for Red)
-        t1_responses_to_optimal = []  # Track all responses for analysis
+        kt_best_response_to_optimal = None
+        best_kt_payoff_to_optimal = float('inf')  # Red wants MINIMUM payoff (most negative = best for Red)
+        kt_responses_to_optimal = []  # Track all responses for analysis
         
-        # Get all valid MID champions (no duplicates, not in Blue team) from scenario pool
-        valid_mid_champions_response = []
+        # Get all valid TOP champions (no duplicates, not in Blue team) from scenario pool
+        valid_top_champions_response = []
         seen_champs = set()  # Track to avoid duplicates
-        for champ in EXTENDED_CHAMPION_POOL["MID"]:
+        for champ in EXTENDED_CHAMPION_POOL["TOP"]:
             if champ in draft.bans or champ in optimal_blue_team or champ in seen_champs:
                 continue
-            valid_mid_champions_response.append(champ)
+            valid_top_champions_response.append(champ)
             seen_champs.add(champ)
         
         print("=" * 70)
         print("ALL CALCULATIONS:")
         print("=" * 70)
-        print(f"{'Champion':<20} {'Payoff':>12} {'T1 Win%':>10} {'Status':<20}")
+        print(f"{'Champion':<20} {'Payoff':>12} {'KT Win%':>10} {'Status':<20}")
         print("-" * 70)
         
-        # Calculate Red MID picks (no progress bar - should be fast with caching)
-        for champ in sorted(valid_mid_champions_response):  # Sort alphabetically for consistent output
+        # Calculate Red TOP picks (no progress bar - should be fast with caching)
+        for champ in sorted(valid_top_champions_response):  # Sort alphabetically for consistent output
             test_red = optimal_red_team.copy()
-            test_red[2] = champ  # MID
+            test_red[0] = champ  # TOP
             # Cache will prevent duplicate API calls for same team matchups
             test_payoff = spne.calculate_payoff(
                 optimal_blue_team, test_red,
@@ -728,38 +741,38 @@ def run_nash_equilibrium_analysis():
             # Blue gets alpha bonus, so Blue's win rate = 1 / (1 + exp(-(payoff + alpha)))
             # Red's win rate = 1 - Blue's win rate = 1 / (1 + exp(payoff + alpha))
             blue_win = 1 / (1 + math.exp(-(test_payoff + alpha)))
-            t1_win = 1 - blue_win  # Red's win rate (no alpha bonus for Red)
-            t1_responses_to_optimal.append((champ, test_payoff, t1_win))
+            kt_win = 1 - blue_win  # Red's win rate (no alpha bonus for Red)
+            kt_responses_to_optimal.append((champ, test_payoff, kt_win))
             
             # Determine status (only mark SPNE)
             status = ""
-            if test_payoff < best_t1_payoff_to_optimal:
-                best_t1_payoff_to_optimal = test_payoff
-                t1_best_response_to_optimal = champ
-            if champ == optimal_t1_mid:
+            if test_payoff < best_kt_payoff_to_optimal:
+                best_kt_payoff_to_optimal = test_payoff
+                kt_best_response_to_optimal = champ
+            if champ == optimal_kt_top:
                 status = " [SPNE]"
             
             payoff_str = f"{test_payoff:>+12.4f}"
             
             # Show win rate with more precision to see differences
-            print(f"{champ:<20} {payoff_str:>30} {t1_win:>9.2%} {status}")
+            print(f"{champ:<20} {payoff_str:>30} {kt_win:>9.2%} {status}")
         
         # Sort by payoff (ascending - most negative first = best for Red)
-        t1_responses_to_optimal.sort(key=lambda x: x[1])
+        kt_responses_to_optimal.sort(key=lambda x: x[1])
         
         print(f"\n{'='*70}")
-        print(f"RED'S BEST RESPONSE: {t1_best_response_to_optimal}")
-        print(f"  Payoff: {best_t1_payoff_to_optimal:+.4f} ({'Red advantage' if best_t1_payoff_to_optimal < 0 else 'Blue advantage'})")
+        print(f"RED'S BEST RESPONSE: {kt_best_response_to_optimal}")
+        print(f"  Payoff: {best_kt_payoff_to_optimal:+.4f} ({'Red advantage' if best_kt_payoff_to_optimal < 0 else 'Blue advantage'})")
         # Blue gets alpha bonus, Red does not
-        blue_win_best = 1 / (1 + math.exp(-(best_t1_payoff_to_optimal + alpha)))
-        t1_win_best = 1 - blue_win_best
-        print(f"  T1 Win Rate: {t1_win_best:.2%}")
-        if t1_best_response_to_optimal != optimal_t1_mid:
-            minimax_response = next((p for c, p, w in t1_responses_to_optimal if c == optimal_t1_mid), None)
+        blue_win_best = 1 / (1 + math.exp(-(best_kt_payoff_to_optimal + alpha)))
+        kt_win_best = 1 - blue_win_best
+        print(f"  KT Win Rate: {kt_win_best:.2%}")
+        if kt_best_response_to_optimal != optimal_kt_top:
+            minimax_response = next((p for c, p, w in kt_responses_to_optimal if c == optimal_kt_top), None)
             if minimax_response is not None:
                 minimax_payoff_red = minimax_response
-                print(f"  Minimax pick was: {optimal_t1_mid} (payoff: {minimax_payoff_red:+.4f})")
-                print(f"  Difference: {best_t1_payoff_to_optimal - minimax_payoff_red:+.4f} (Red should pick the MORE NEGATIVE payoff)")
+                print(f"  Minimax pick was: {optimal_kt_top} (payoff: {minimax_payoff_red:+.4f})")
+                print(f"  Difference: {best_kt_payoff_to_optimal - minimax_payoff_red:+.4f} (Red should pick the MORE NEGATIVE payoff)")
         print(f"{'='*70}")
         print(f"\nTotal calculations performed: {spne.calculation_count:,}")
         
@@ -772,23 +785,23 @@ def run_nash_equilibrium_analysis():
         # DON'T clear cache - reuse it to avoid duplicate API calls
         print(f"Cache status: {len(spne.payoff_cache)} entries (will reuse to avoid duplicate API calls)")
         
-        t1_best_response_to_actual = None
-        best_t1_payoff_to_actual = float('inf')  # Red wants to minimize Blue's payoff
-        t1_responses_to_actual = []  # Track all responses for analysis
+        kt_best_response_to_actual = None
+        best_kt_payoff_to_actual = float('inf')  # Red wants to minimize Blue's payoff
+        kt_responses_to_actual = []  # Track all responses for analysis
         
-        # Get all valid MID champions from scenario pool
-        valid_mid_champions_actual = []
+        # Get all valid TOP champions
+        valid_top_champions_actual = []
         seen_champs = set()  # Track to avoid duplicates
-        for champ in EXTENDED_CHAMPION_POOL["MID"]:
+        for champ in EXTENDED_CHAMPION_POOL["TOP"]:
             if champ in draft.bans or champ in actual_blue_team or champ in seen_champs:
                 continue
-            valid_mid_champions_actual.append(champ)
+            valid_top_champions_actual.append(champ)
             seen_champs.add(champ)
         
-        # Calculate Red MID picks (actual) - no progress bar, should be fast with caching
-        for champ in sorted(valid_mid_champions_actual):
+        # Calculate Red TOP picks (actual) - no progress bar, should be fast with caching
+        for champ in sorted(valid_top_champions_actual):
             test_red = actual_red_team.copy()
-            test_red[2] = champ  # MID
+            test_red[0] = champ  # TOP
             # Cache will prevent duplicate API calls for same team matchups
             test_payoff = spne.calculate_payoff(
                 actual_blue_team, test_red,
@@ -797,19 +810,19 @@ def run_nash_equilibrium_analysis():
             
             # Blue gets alpha bonus, Red does not
             blue_win = 1 / (1 + math.exp(-(test_payoff + alpha)))
-            t1_win = 1 - blue_win  # Red's win rate
-            t1_responses_to_actual.append((champ, test_payoff, t1_win))
+            kt_win = 1 - blue_win  # Red's win rate
+            kt_responses_to_actual.append((champ, test_payoff, kt_win))
             
-            if test_payoff < best_t1_payoff_to_actual:
-                best_t1_payoff_to_actual = test_payoff
-                t1_best_response_to_actual = champ
+            if test_payoff < best_kt_payoff_to_actual:
+                best_kt_payoff_to_actual = test_payoff
+                kt_best_response_to_actual = champ
         
         # Sort and show top responses
-        t1_responses_to_actual.sort(key=lambda x: x[1])  # Sort by payoff (lower = better for Red)
+        kt_responses_to_actual.sort(key=lambda x: x[1])  # Sort by payoff (lower = better for Red)
         print(f"Top 5 responses:")
-        for i, (champ, payoff, win) in enumerate(t1_responses_to_actual[:5]):
-            marker = " [BEST]" if i == 0 else " [ACTUAL]" if champ == t1_actual_mid else ""
-            print(f"  {i+1}. {champ}: Payoff={payoff:+.4f}, T1 Win={win:.1%}{marker}")
+        for i, (champ, payoff, win) in enumerate(kt_responses_to_actual[:5]):
+            marker = " [BEST]" if i == 0 else " [ACTUAL]" if champ == kt_actual_top else ""
+            print(f"  {i+1}. {champ}: Payoff={payoff:+.4f}, KT Win={win:.1%}{marker}")
         
         print(f"\nCalculations performed: {spne.calculation_count:,}")
         
@@ -823,14 +836,14 @@ def run_nash_equilibrium_analysis():
         # Build teams for each scenario
         # 1. Optimal Blue vs Best Response to Optimal
         optimal_vs_br_optimal_red = optimal_red_team.copy()
-        optimal_vs_br_optimal_red[2] = t1_best_response_to_optimal  # MID
+        optimal_vs_br_optimal_red[0] = kt_best_response_to_optimal  # TOP
         
         # 2. Optimal Blue vs SPNE Red
         optimal_vs_spne_red = optimal_red_team.copy()
         
         # 3. Actual Blue vs Best Response to Actual
         actual_vs_br_actual_red = actual_red_team.copy()
-        actual_vs_br_actual_red[2] = t1_best_response_to_actual  # MID
+        actual_vs_br_actual_red[0] = kt_best_response_to_actual  # TOP
         
         # 4. Actual Blue vs Actual Red
         actual_vs_actual_red = actual_red_team.copy()
@@ -839,10 +852,10 @@ def run_nash_equilibrium_analysis():
         print(f"Cache status: {len(spne.payoff_cache)} entries (will reuse to avoid duplicate API calls)")
         
         scenarios = [
-            (f"Optimal Blue ({optimal_kt_mid}, {optimal_kt_bot}) vs SPNE Red ({optimal_t1_mid})", optimal_blue_team, optimal_vs_spne_red),
-            (f"Optimal Blue ({optimal_kt_mid}, {optimal_kt_bot}) vs Best Response ({t1_best_response_to_optimal})", optimal_blue_team, optimal_vs_br_optimal_red),
-            (f"Actual Blue ({kt_actual_mid}, {kt_actual_bot}) vs Best Response ({t1_best_response_to_actual})", actual_blue_team, actual_vs_br_actual_red),
-            (f"Actual Blue ({kt_actual_mid}, {kt_actual_bot}) vs Actual Red ({t1_actual_mid})", actual_blue_team, actual_vs_actual_red),
+            (f"Optimal Blue ({optimal_t1_top}, {optimal_t1_mid}) vs SPNE Red ({optimal_kt_top})", optimal_blue_team, optimal_vs_spne_red),
+            (f"Optimal Blue ({optimal_t1_top}, {optimal_t1_mid}) vs Best Response ({kt_best_response_to_optimal})", optimal_blue_team, optimal_vs_br_optimal_red),
+            (f"Actual Blue ({t1_actual_top}, {t1_actual_mid}) vs Best Response ({kt_best_response_to_actual})", actual_blue_team, actual_vs_br_actual_red),
+            (f"Actual Blue ({t1_actual_top}, {t1_actual_mid}) vs Actual Red ({kt_actual_top})", actual_blue_team, actual_vs_actual_red),
         ]
         
         results = []
@@ -855,7 +868,7 @@ def run_nash_equilibrium_analysis():
             red_win = 1 - blue_win
             results.append((name, payoff, blue_win, red_win))
         
-        print(f"\n{'Scenario':<40} {'Payoff':>10} {'KT Win%':>10} {'T1 Win%':>10}")
+        print(f"\n{'Scenario':<40} {'Payoff':>10} {'T1 Win%':>10} {'KT Win%':>10}")
         print("-" * 75)
         for name, payoff, blue_win, red_win in results:
             print(f"{name:<40} {payoff:>+10.4f} {blue_win:>9.1%} {red_win:>9.1%}")
@@ -872,29 +885,29 @@ def run_nash_equilibrium_analysis():
         print("KEY FINDINGS")
         print("=" * 70)
         
-        print(f"\n1. Blue's Optimal Picks ({optimal_kt_mid}, {optimal_kt_bot}): MID={optimal_kt_mid}, BOT={optimal_kt_bot}")
-        print(f"   Red's SPNE response ({optimal_t1_mid}): {optimal_t1_mid}")
-        print(f"     -> Payoff: {opt_vs_spne[1]:+.4f} (T1 win: {opt_vs_spne[3]:.1%})")
-        print(f"   Red's best response ({t1_best_response_to_optimal}): {t1_best_response_to_optimal}")
-        print(f"     -> Payoff: {opt_vs_br_opt[1]:+.4f} (T1 win: {opt_vs_br_opt[3]:.1%})")
+        print(f"\n1. Blue's Optimal Picks ({optimal_t1_top}, {optimal_t1_mid}): TOP={optimal_t1_top}, MID={optimal_t1_mid}")
+        print(f"   Red's SPNE response ({optimal_kt_top}): {optimal_kt_top}")
+        print(f"     -> Payoff: {opt_vs_spne[1]:+.4f} (T1 win: {opt_vs_spne[2]:.1%}, KT win: {opt_vs_spne[3]:.1%})")
+        print(f"   Red's best response ({kt_best_response_to_optimal}): {kt_best_response_to_optimal}")
+        print(f"     -> Payoff: {opt_vs_br_opt[1]:+.4f} (T1 win: {opt_vs_br_opt[2]:.1%}, KT win: {opt_vs_br_opt[3]:.1%})")
         
-        if t1_best_response_to_optimal == optimal_t1_mid:
-            print(f"   [OK] SPNE pick ({optimal_t1_mid}) matches best response ({t1_best_response_to_optimal})!")
+        if kt_best_response_to_optimal == optimal_kt_top:
+            print(f"   [OK] SPNE pick ({optimal_kt_top}) matches best response ({kt_best_response_to_optimal})!")
         else:
             # Red wants the MORE NEGATIVE payoff (lower value)
             payoff_diff = opt_vs_br_opt[1] - opt_vs_spne[1]  # Negative means best response is better for Red
             win_diff = opt_vs_br_opt[3] - opt_vs_spne[3]
-            print(f"   [WARNING] SPNE pick ({optimal_t1_mid}) is NOT the best response ({t1_best_response_to_optimal})!")
+            print(f"   [WARNING] SPNE pick ({optimal_kt_top}) is NOT the best response ({kt_best_response_to_optimal})!")
             print(f"   Best response payoff ({opt_vs_br_opt[1]:+.4f}) is {abs(payoff_diff):.4f} {'more negative' if payoff_diff < 0 else 'less negative'} than SPNE ({opt_vs_spne[1]:+.4f})")
-            print(f"   This gives T1 {win_diff:+.1%} better win rate")
+            print(f"   This gives KT {win_diff:+.1%} better win rate")
         
-        print(f"\n2. Blue's Actual Picks ({kt_actual_mid}, {kt_actual_bot}): MID={kt_actual_mid}, BOT={kt_actual_bot}")
-        print(f"   Red's best response ({t1_best_response_to_actual}): {t1_best_response_to_actual}")
-        print(f"     -> Payoff: {actual_vs_br_actual[1]:+.4f} (T1 win: {actual_vs_br_actual[3]:.1%})")
-        print(f"   Red's actual pick ({t1_actual_mid}): {t1_actual_mid}")
-        print(f"     -> Payoff: {actual_vs_actual[1]:+.4f} (T1 win: {actual_vs_actual[3]:.1%})")
+        print(f"\n2. Blue's Actual Picks ({t1_actual_top}, {t1_actual_mid}): TOP={t1_actual_top}, MID={t1_actual_mid}")
+        print(f"   Red's best response ({kt_best_response_to_actual}): {kt_best_response_to_actual}")
+        print(f"     -> Payoff: {actual_vs_br_actual[1]:+.4f} (T1 win: {actual_vs_br_actual[2]:.1%}, KT win: {actual_vs_br_actual[3]:.1%})")
+        print(f"   Red's actual pick ({kt_actual_top}): {kt_actual_top}")
+        print(f"     -> Payoff: {actual_vs_actual[1]:+.4f} (T1 win: {actual_vs_actual[2]:.1%}, KT win: {actual_vs_actual[3]:.1%})")
         
-        if t1_best_response_to_actual == t1_actual_mid:
+        if kt_best_response_to_actual == kt_actual_top:
             print(f"   [OK] Red picked the best response!")
         else:
             payoff_diff = actual_vs_actual[1] - actual_vs_br_actual[1]
@@ -912,19 +925,19 @@ def run_nash_equilibrium_analysis():
         print(f"\nSPNE Definition:")
         print(f"  In a Subgame Perfect Nash Equilibrium, each player's strategy must be")
         print(f"  a best response to the other player's strategy at EVERY subgame.")
-        print(f"  If Blue picks optimally ({optimal_kt_mid}, {optimal_kt_bot}), then")
-        print(f"  Red's SPNE pick ({optimal_t1_mid}) MUST be the best response (minimum payoff).")
+        print(f"  If Blue picks optimally ({optimal_t1_top}, {optimal_t1_mid}), then")
+        print(f"  Red's SPNE pick ({optimal_kt_top}) MUST be the best response (minimum payoff).")
         
-        if t1_best_response_to_optimal == optimal_t1_mid:
-            print(f"\n[OK] SPNE VERIFIED: The SPNE pick ({optimal_t1_mid}) IS the best response ({t1_best_response_to_optimal})!")
+        if kt_best_response_to_optimal == optimal_kt_top:
+            print(f"\n[OK] SPNE VERIFIED: The SPNE pick ({optimal_kt_top}) IS the best response ({kt_best_response_to_optimal})!")
             print(f"  Payoff: {opt_vs_spne[1]:+.4f} (minimum = best for Red)")
         else:
             payoff_diff = opt_vs_br_opt[1] - opt_vs_spne[1]
             print(f"\n[WARNING] SPNE DISCREPANCY DETECTED!")
-            print(f"  SPNE calculated ({optimal_t1_mid}): {optimal_t1_mid}")
-            print(f"    -> Payoff: {opt_vs_spne[1]:+.4f} (T1 win: {opt_vs_spne[3]:.1%})")
-            print(f"  Actual best response ({t1_best_response_to_optimal}): {t1_best_response_to_optimal}")
-            print(f"    -> Payoff: {opt_vs_br_opt[1]:+.4f} (T1 win: {opt_vs_br_opt[3]:.1%})")
+            print(f"  SPNE calculated ({optimal_kt_top}): {optimal_kt_top}")
+            print(f"    -> Payoff: {opt_vs_spne[1]:+.4f} (T1 win: {opt_vs_spne[2]:.1%}, KT win: {opt_vs_spne[3]:.1%})")
+            print(f"  Actual best response ({kt_best_response_to_optimal}): {kt_best_response_to_optimal}")
+            print(f"    -> Payoff: {opt_vs_br_opt[1]:+.4f} (T1 win: {opt_vs_br_opt[2]:.1%}, KT win: {opt_vs_br_opt[3]:.1%})")
             print(f"  Payoff difference: {payoff_diff:+.4f} ({'more negative' if payoff_diff < 0 else 'less negative'} = better for Red)")
             print(f"  Win rate difference: {opt_vs_br_opt[3] - opt_vs_spne[3]:+.1%}")
             print(f"\n  This suggests the SPNE solver may have:")

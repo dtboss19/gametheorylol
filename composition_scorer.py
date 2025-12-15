@@ -1455,6 +1455,19 @@ class CompositionScorer:
             blue_champ = blue_team[i]
             red_champ = red_team[i]
             
+            # If either side hasn't picked this role yet, treat as neutral and skip API calls
+            if blue_champ is None or red_champ is None:
+                matchup_differences.append(0.0)
+                matchup_details.append({
+                    'role': role,
+                    'blue_champ': blue_champ,
+                    'red_champ': red_champ,
+                    'wr_blue_vs_red': None,
+                    'wr_red_vs_blue': None,
+                    'difference': 0.0
+                })
+                continue
+            
             # OPTIMIZATION: Only make ONE API call per matchup pair
             # If we get blue vs red, we can derive red vs blue = 1 - (blue vs red)
             if debug_matchups:
@@ -2635,6 +2648,23 @@ class CompositionScorer:
             red_player = red_players[i]
             blue_champ = blue_team[i]
             red_champ = red_team[i]
+
+            # If either side hasn't picked this role yet, treat comfort as neutral and skip lookups
+            if blue_champ is None or red_champ is None:
+                comfort_differences.append(0.0)
+                comfort_details.append({
+                    'role': role,
+                    'blue_player': blue_player,
+                    'red_player': red_player,
+                    'blue_champ': blue_champ,
+                    'red_champ': red_champ,
+                    'blue_wr': None,
+                    'red_wr': None,
+                    'blue_games': 0,
+                    'red_games': 0,
+                    'difference': 0.0,
+                })
+                continue
             
             # Get player winrates - use database if available and requested, otherwise use OP.GG scraping
             # Cache key for player comfort: (player_name, champion_name)

@@ -247,7 +247,10 @@ class SubgamePerfectNashEquilibrium:
         # Check cache if memoization is enabled
         cache_hit = False
         if self.use_memoization:
-            cache_key = (tuple(sorted(blue_team)), tuple(sorted(red_team)), 
+            # Some team slots may be None; sort with a key that handles None safely
+            safe_blue = tuple(sorted(blue_team, key=lambda c: (c is None, c or "")))
+            safe_red = tuple(sorted(red_team, key=lambda c: (c is None, c or "")))
+            cache_key = (safe_blue, safe_red, 
                         tuple(blue_players) if blue_players else None,
                         tuple(red_players) if red_players else None,
                         region)
@@ -298,13 +301,19 @@ class SubgamePerfectNashEquilibrium:
                 comfort = comfort_result if isinstance(comfort_result, (int, float)) else comfort_result.get('score', 0.0)
         
         # Calculate composition scores (fast, uses database only)
-        if timing_debug:
-            t0 = time.time()
-        blue_comp = self.scorer.calculate_composition_score(blue_team, self.w3)
-        red_comp = self.scorer.calculate_composition_score(red_team, self.w3)
-        if timing_debug:
-            timings['composition'] = time.time() - t0
-        comp_advantage = blue_comp['total_score'] - red_comp['total_score']
+        # If either team has unpicked roles (None), treat composition as neutral (0 advantage)
+        if any(champ is None for champ in blue_team) or any(champ is None for champ in red_team):
+            comp_advantage = 0.0
+            if timing_debug:
+                timings['composition'] = 0.0
+        else:
+            if timing_debug:
+                t0 = time.time()
+            blue_comp = self.scorer.calculate_composition_score(blue_team, self.w3)
+            red_comp = self.scorer.calculate_composition_score(red_team, self.w3)
+            if timing_debug:
+                timings['composition'] = time.time() - t0
+            comp_advantage = blue_comp['total_score'] - red_comp['total_score']
         
         if timing_debug and timings:
             print(f"      [TIMING] matchup={timings.get('matchup', 0):.2f}s, comfort={timings.get('comfort', 0):.2f}s, comp={timings.get('composition', 0):.2f}s")
