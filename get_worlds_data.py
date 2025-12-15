@@ -21,6 +21,43 @@ CHAMPION_POOL = {
     "SUPPORT": ["Alistar", "Rakan", "Neeko", "Braum", "Leona", "Bard"],
 }
 
+# Extended champion pool (all champions from Worlds 2025)
+EXTENDED_CHAMPION_POOL = {
+    "TOP": [
+        "Ksante", "Sion", "Rumble", "Ambessa", "RekSai", "Renekton", 
+        "Ornn", "Mordekaiser", "Aatrox", "Jax", "Poppy", "Camille", 
+        "Galio", "Yorick", "Kled", "Jayce", "Gwen", "Gragas", "Aurora", "Gnar"
+    ],
+    "JUNGLE": [
+        "XinZhao", "JarvanIV", "Wukong", "Trundle", "Vi", "Qiyana", 
+        "Pantheon", "Naafiri", "DrMundo", "Nocturne", "Sejuani", "Skarner", 
+        "Poppy", "Viego", "Maokai", "Nidalee"
+    ],
+    "MID": [
+        "Ryze", "Orianna", "Taliyah", "Aurora", "Azir", "Galio", 
+        "Cassiopeia", "Viktor", "Yone", "Akali", "Annie", "Sylas", 
+        "Anivia", "LeBlanc", "Hwei", "Syndra", "Mel", "Ziggs", "Smolder", 
+        "Ahri", "Swain", "Zoe"
+    ],
+    "BOT": [
+        "Corki", "KaiSa", "Yunara", "Caitlyn", "Ezreal", "Sivir", 
+        "Varus", "Xayah", "Lucian", "Ziggs", "Draven", "Jhin", "Ashe", 
+        "Kalista", "Vayne", "MissFortune", "Smolder", "Jinx"
+    ],
+    "SUPPORT": [
+        "Alistar", "Rakan", "Neeko", "Braum", "Leona", "Bard", 
+        "Nautilus", "Rell", "Poppy", "Karma", "Nami", "Lulu", 
+        "Renata", "TahmKench"
+    ],
+}
+
+# Flag to use extended pool (set to True to use extended, False for original)
+USE_EXTENDED_POOL = False
+
+# Select which pool to use based on flag
+if USE_EXTENDED_POOL:
+    CHAMPION_POOL = EXTENDED_CHAMPION_POOL
+
 ALL_CHAMPIONS = [champ for role_champs in CHAMPION_POOL.values() for champ in role_champs]
 
 # ============================================================================

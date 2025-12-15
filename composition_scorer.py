@@ -9,6 +9,15 @@ import re
 import requests
 from typing import List, Dict, Optional, Tuple
 from bs4 import BeautifulSoup
+
+# Import player comfort data from database
+try:
+    from get_worlds_data import get_player_comfort, load_player_comfort_data
+    HAS_PLAYER_COMFORT_DB = True
+except ImportError:
+    HAS_PLAYER_COMFORT_DB = False
+    def get_player_comfort(player_name, champion_name, min_games=5):
+        return {'winrate': 0.5, 'games': 0, 'found': False}
 from urllib.parse import urlparse, parse_qs
 
 
@@ -28,6 +37,12 @@ class CompositionScorer:
         self.conn = sqlite3.connect(db_path)
         self.conn.row_factory = sqlite3.Row  # Access columns by name
         self.riot_api_key = riot_api_key
+        # Cache for champion matchups: (champ1, champ2, role) -> winrate
+        # This prevents redundant API calls for the same matchup
+        self.matchup_cache = {}
+        # Cache for player-champion winrates: (player_name, champion, region) -> {'winrate': float, 'games_played': int}
+        # This prevents redundant OP.GG scraping for the same player-champion combination
+        self.player_comfort_cache = {}
     
     def get_champion_data(self, champion_name: str) -> Optional[Dict]:
         """Get champion data from database by name."""
@@ -920,6 +935,8 @@ class CompositionScorer:
     def get_champion_matchup_winrate(self, champion1: str, champion2: str, role: str = None) -> Optional[float]:
         """
         Get win rate of champion1 vs champion2 from u.gg.
+        Uses caching to avoid redundant API calls. If we have champ1 vs champ2,
+        we can derive champ2 vs champ1 as (1 - winrate).
         
         Args:
             champion1: First champion name
@@ -929,12 +946,35 @@ class CompositionScorer:
         Returns:
             Win rate as a decimal (e.g., 0.52 for 52%), or None if unavailable
         """
-        # Normalize champion names for URL
+        # Normalize champion names (for URL - u.gg uses "monkeyking" not "wukong")
         champ1_normalized = self._normalize_champion_name(champion1)
         champ2_normalized = self._normalize_champion_name(champion2)
         
-        # Build u.gg matchup URL - try counter page first
-        url = f"https://u.gg/lol/champions/{champ1_normalized}/counter"
+        # Keep original names for display
+        champ1_display = champion1
+        champ2_display = champion2
+        
+        # Create cache key (always use alphabetical order to ensure consistency)
+        # This way (Ashe, Varus) and (Varus, Ashe) use the same cache entry
+        # Store as (min_champ, max_champ, role) -> winrate of min_champ vs max_champ
+        sorted_champs = sorted([champ1_normalized, champ2_normalized])
+        cache_key = (sorted_champs[0], sorted_champs[1], role)
+        
+        # Check cache - if we have it, return the correct winrate
+        if cache_key in self.matchup_cache:
+            cached_winrate = self.matchup_cache[cache_key]
+            if cached_winrate is None:
+                return None
+            # Return cached winrate if champ1 is first alphabetically, otherwise return 1 - winrate
+            if champ1_normalized == sorted_champs[0]:
+                return cached_winrate
+            else:
+                return 1.0 - cached_winrate
+        
+        # Need to make API call - build u.gg matchup URL
+        # Use direct matchup URL: /champions/{champ}/build?opp={opponent}
+        # This is simpler and more reliable than scraping the counter page
+        url = f"https://u.gg/lol/champions/{champ1_normalized}/build?opp={champ2_normalized}"
         
         try:
             headers = {
@@ -945,15 +985,172 @@ class CompositionScorer:
             
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            # Strategy 1: Look for JSON data in script tags
+            # Debug mode disabled by default (set to True to enable debugging)
+            debug_mode = False
+            # Uncomment the line below to enable debug for specific matchups:
+            # debug_mode = (len(self.matchup_cache) < 5 or 
+            #              ('wukong' in champ1_normalized.lower() and 'xinzhao' in champ2_normalized.lower()) or
+            #              ('xinzhao' in champ1_normalized.lower() and 'wukong' in champ2_normalized.lower()) or
+            #              ('ryze' in champ1_normalized.lower() and 'taliyah' in champ2_normalized.lower()) or
+            #              ('taliyah' in champ1_normalized.lower() and 'ryze' in champ2_normalized.lower()))
+            if debug_mode:
+                print(f"\n[DEBUG] Fetching matchup data for {champ1_display} vs {champ2_display} (role: {role})")
+                print(f"[DEBUG] Using u.gg URL: {url}")
+            
+            # Strategy 1: Look for win rate directly in the page HTML
+            # The direct matchup page shows "50.53% Win Rate" prominently
+            # Try multiple approaches to find it
+            winrate = None
+            
+            # Approach 1: Look for text pattern "XX.XX% Win Rate"
+            winrate_text = soup.find(text=re.compile(r'\d+\.?\d*\s*%\s*Win\s*Rate', re.I))
+            if winrate_text:
+                match = re.search(r'(\d+\.?\d*)', str(winrate_text))
+                if match:
+                    winrate_pct = float(match.group(1))
+                    winrate = winrate_pct / 100.0
+                    if debug_mode:
+                        print(f"[DEBUG] Found win rate via text pattern: {winrate_pct}%")
+            
+            # Approach 2: Look for elements containing "Win Rate" and find nearby percentage
+            if winrate is None:
+                win_rate_elements = soup.find_all(string=re.compile(r'Win\s*Rate', re.I))
+                for elem in win_rate_elements:
+                    # Look in parent and siblings for percentage
+                    parent = elem.parent if hasattr(elem, 'parent') else None
+                    if parent:
+                        # Check parent text
+                        parent_text = parent.get_text()
+                        match = re.search(r'(\d+\.?\d*)\s*%\s*Win\s*Rate', parent_text, re.I)
+                        if match:
+                            winrate_pct = float(match.group(1))
+                            winrate = winrate_pct / 100.0
+                            if debug_mode:
+                                print(f"[DEBUG] Found win rate in parent element: {winrate_pct}%")
+                            break
+                        # Check next sibling
+                        if hasattr(parent, 'next_sibling') and parent.next_sibling:
+                            sibling_text = parent.next_sibling.get_text() if hasattr(parent.next_sibling, 'get_text') else str(parent.next_sibling)
+                            match = re.search(r'(\d+\.?\d*)%', sibling_text)
+                            if match:
+                                winrate_pct = float(match.group(1))
+                                winrate = winrate_pct / 100.0
+                                if debug_mode:
+                                    print(f"[DEBUG] Found win rate in sibling: {winrate_pct}%")
+                                break
+            
+            # Approach 3: Search all text for pattern "XX.XX%" near "Win Rate" or "vs. Xin Zhao"
+            if winrate is None:
+                all_text = soup.get_text()
+                # Look for pattern like "50.53% Win Rate" or "50.53%" near opponent name
+                patterns = [
+                    r'(\d+\.?\d*)\s*%\s*Win\s*Rate',
+                    r'Win\s*Rate[:\s]*(\d+\.?\d*)%',
+                    rf'vs\.?\s*{re.escape(champ2_display)}[^\d]*(\d+\.?\d*)%',
+                ]
+                for pattern in patterns:
+                    match = re.search(pattern, all_text, re.I)
+                    if match:
+                        winrate_pct = float(match.group(1))
+                        winrate = winrate_pct / 100.0
+                        if debug_mode:
+                            print(f"[DEBUG] Found win rate via text search: {winrate_pct}%")
+                        break
+            
+            if winrate is not None and 0.25 <= winrate <= 0.75:
+                if debug_mode:
+                    print(f"[DEBUG] Using win rate from HTML: {winrate:.4f} ({winrate*100:.2f}%)")
+                    print(f"[DEBUG] This is {champ1_display}'s winrate vs {champ2_display} (no inversion needed)")
+                
+                # This is champ1's winrate vs champ2 (already correct, no inversion needed)
+                # The page shows "Wukong vs XinZhao: 50.53%" which is Wukong's winrate
+                # Cache the result (always store in alphabetical order: min_champ vs max_champ)
+                if champ1_normalized == sorted_champs[0]:
+                    self.matchup_cache[cache_key] = winrate
+                    return winrate
+                else:
+                    self.matchup_cache[cache_key] = 1.0 - winrate
+                    return winrate
+            elif winrate is not None:
+                if debug_mode:
+                    print(f"[DEBUG] Found winrate {winrate:.4f} but outside valid range (0.25-0.75), skipping")
+            
+            # If HTML parsing didn't work, try to save the page for debugging
+            if winrate is None and debug_mode:
+                print(f"[DEBUG] HTML parsing failed, trying to find winrate in page structure...")
+                # Look for common HTML structures that might contain winrate
+                # Try finding elements with class names that might contain winrate
+                for tag in soup.find_all(['div', 'span', 'p', 'h1', 'h2', 'h3']):
+                    text = tag.get_text() if hasattr(tag, 'get_text') else str(tag)
+                    if 'win rate' in text.lower() or 'winrate' in text.lower():
+                        match = re.search(r'(\d+\.?\d*)%', text)
+                        if match:
+                            winrate_pct = float(match.group(1))
+                            candidate = winrate_pct / 100.0
+                            if 0.25 <= candidate <= 0.75:
+                                winrate = candidate
+                                print(f"[DEBUG] Found winrate in element text: {winrate_pct}%")
+                                break
+                
+                if winrate is None:
+                    print(f"[DEBUG] Still not found in HTML elements, will try JSON fallback...")
+                    # Dump a sample of the page text to see what we're working with
+                    page_text_sample = soup.get_text()[:500] if hasattr(soup, 'get_text') else str(soup)[:500]
+                    print(f"[DEBUG] Page text sample (first 500 chars): {page_text_sample}")
+            
+            # Strategy 2: Look for JSON data in script tags (fallback)
+            # NOTE: Since we're using direct matchup page (?opp=), JSON should also contain champ1's winrate directly
             scripts = soup.find_all('script', type='application/json')
             for script in scripts:
                 try:
                     import json
                     data = json.loads(script.string)
-                    winrate = self._extract_matchup_winrate_from_json(data, champ2_normalized, role)
+                    # Debug mode is already set above (disabled by default)
+                    # Reuse the same debug_mode variable
+                    if debug_mode:
+                        print(f"\n[DEBUG] Extracting matchup data for {champ1_display} vs {champ2_display} (role: {role})")
+                        print(f"[DEBUG] Using u.gg URL: {url} (normalized: {champ1_normalized} vs {champ2_normalized})")
+                        print(f"[DEBUG] Searching JSON data structure...")
+                    # For matching in JSON, try both normalized and original name
+                    # JSON might use "Xin Zhao" with space, not "xinzhao"
+                    champ2_for_matching = champ2_normalized
+                    # Also try with space if it's a camelCase name
+                    if not ' ' in champ2_display and not '-' in champ2_display:
+                        # Try adding space before capitals (e.g., "XinZhao" -> "Xin Zhao")
+                        # Note: re is imported at module level
+                        champ2_with_space = re.sub(r'(?<!^)(?<! )([A-Z])', r' \1', champ2_display)
+                        if champ2_with_space != champ2_display:
+                            # Try matching with space version too
+                            champ2_for_matching = champ2_with_space.lower()
+                    
+                    winrate = self._extract_matchup_winrate_from_json(data, champ2_for_matching, role, debug=debug_mode)
+                    # If not found with normalized, try with space version
+                    if winrate is None and champ2_for_matching != champ2_normalized:
+                        if debug_mode:
+                            print(f"[DEBUG] Trying alternative match: '{champ2_normalized}'")
+                        winrate = self._extract_matchup_winrate_from_json(data, champ2_normalized, role, debug=debug_mode)
                     if winrate is not None:
-                        return winrate
+                        # NOTE: We're using direct matchup page (?opp=), so winrate should be champ1's winrate directly
+                        # No inversion needed - the page shows "Wukong vs XinZhao: 50.53%" which is Wukong's winrate
+                        if 0.25 <= winrate <= 0.75:
+                            champ1_winrate = winrate
+                        else:
+                            # Value outside reasonable range, skip it
+                            if debug_mode:
+                                print(f"[DEBUG] JSON winrate {winrate:.4f} outside valid range (0.25-0.75), skipping")
+                            continue
+                        
+                        if debug_mode:
+                            print(f"[DEBUG] Extracted winrate from JSON: {champ1_winrate:.4f} ({champ1_winrate*100:.2f}%)")
+                            print(f"[DEBUG] This is {champ1_display}'s winrate vs {champ2_display} (no inversion needed)")
+                        
+                        # Cache the result (always store in alphabetical order: min_champ vs max_champ)
+                        if champ1_normalized == sorted_champs[0]:
+                            self.matchup_cache[cache_key] = champ1_winrate
+                            return champ1_winrate
+                        else:
+                            self.matchup_cache[cache_key] = 1.0 - champ1_winrate
+                            return champ1_winrate
                 except (json.JSONDecodeError, AttributeError):
                     continue
             
@@ -968,7 +1165,19 @@ class CompositionScorer:
                     if winrate_elem:
                         match = re.search(r'(\d+\.?\d*)', str(winrate_elem))
                         if match:
-                            return float(match.group(1)) / 100.0
+                            winrate = float(match.group(1)) / 100.0
+                            
+                            # IMPORTANT: u.gg counter pages show the OPPONENT's counter rate
+                            # Invert to get champ1's actual winrate vs champ2
+                            champ1_winrate = 1.0 - winrate
+                            
+                            # Cache the result (always store in alphabetical order: min_champ vs max_champ)
+                            if champ1_normalized == sorted_champs[0]:
+                                self.matchup_cache[cache_key] = champ1_winrate
+                                return champ1_winrate
+                            else:
+                                self.matchup_cache[cache_key] = 1.0 - champ1_winrate
+                                return champ1_winrate
             
             # Strategy 3: Look for win rate patterns in the page
             winrate_pattern = r'(\d+\.?\d*)\s*%'
@@ -981,20 +1190,37 @@ class CompositionScorer:
                 context_end = min(len(all_text), match.end() + 100)
                 context = all_text[context_start:context_end].lower()
                 if champ2_normalized in context:
-                    return float(match.group(1)) / 100.0
+                    winrate = float(match.group(1)) / 100.0
+                    
+                    # IMPORTANT: u.gg counter pages show the OPPONENT's counter rate
+                    # Invert to get champ1's actual winrate vs champ2
+                    champ1_winrate = 1.0 - winrate
+                    
+                    # Cache the result (always store in alphabetical order: min_champ vs max_champ)
+                    if champ1_normalized == sorted_champs[0]:
+                        self.matchup_cache[cache_key] = champ1_winrate
+                        return champ1_winrate
+                    else:
+                        self.matchup_cache[cache_key] = 1.0 - champ1_winrate
+                        return champ1_winrate
             
+            # No matchup found - cache None to avoid retrying
+            self.matchup_cache[cache_key] = None
             return None
             
         except requests.RequestException:
+            # Cache None to avoid retrying failed requests
+            self.matchup_cache[cache_key] = None
             return None
         except (ValueError, AttributeError):
+            self.matchup_cache[cache_key] = None
             return None
     
     def _normalize_champion_name(self, champion_name: str) -> str:
         """Normalize champion name for URL (e.g., 'Aurelion Sol' -> 'aurelion-sol')."""
         # Handle special cases
+        # NOTE: u.gg uses "wukong" not "monkeyking" in URLs (verified: https://u.gg/lol/champions/wukong/build)
         special_cases = {
-            'wukong': 'monkeyking',
             'nunu': 'nunu-willump',
             'renata glasc': 'renata',
         }
@@ -1045,49 +1271,148 @@ class CompositionScorer:
         
         return normalized
     
-    def _extract_matchup_winrate_from_json(self, data, opponent_name: str, role: str = None) -> Optional[float]:
+    def _extract_matchup_winrate_from_json(self, data, opponent_name: str, role: str = None, debug: bool = False) -> Optional[float]:
         """Extract matchup win rate from JSON data structure."""
         if isinstance(data, dict):
             # Look for matchup data
             if 'matchups' in data or 'counters' in data:
                 matchups = data.get('matchups') or data.get('counters', [])
+                if debug:
+                    print(f"[DEBUG] Found {len(matchups)} matchups in JSON")
+                    if len(matchups) > 0 and isinstance(matchups[0], dict):
+                        print(f"[DEBUG] Sample matchup keys: {list(matchups[0].keys())}")
+                        # Show first few opponent names for debugging
+                        sample_names = []
+                        for m in matchups[:5]:
+                            if isinstance(m, dict):
+                                name = (m.get('opponent') or m.get('champion') or m.get('name', 'N/A'))
+                                sample_names.append(name)
+                        print(f"[DEBUG] Sample opponent names: {sample_names}")
+                
                 for matchup in matchups:
                     if isinstance(matchup, dict):
                         opp_name = (matchup.get('opponent') or 
                                   matchup.get('champion') or 
                                   matchup.get('name', '')).lower()
-                        if opponent_name in opp_name or opp_name in opponent_name:
+                        if debug and len(matchups) <= 20:  # Only print all if small list
+                            print(f"[DEBUG] Checking: '{opp_name}' vs '{opponent_name}'")
+                        
+                        # Try multiple matching strategies:
+                        # 1. Direct substring match (handles "xinzhao" vs "xin zhao")
+                        # 2. Remove spaces/hyphens and compare (handles "xin zhao" vs "xinzhao")
+                        # 3. Check if normalized versions match
+                        opp_name_normalized = opp_name.replace(' ', '').replace('-', '').replace("'", "").replace('.', '')
+                        opponent_name_normalized = opponent_name.replace(' ', '').replace('-', '').replace("'", "").replace('.', '')
+                        
+                        match_found = (
+                            opponent_name in opp_name or 
+                            opp_name in opponent_name or
+                            opponent_name_normalized in opp_name_normalized or
+                            opp_name_normalized in opponent_name_normalized or
+                            opponent_name_normalized == opp_name_normalized
+                        )
+                        
+                        if match_found:
                             # Check role if specified
                             if role:
                                 matchup_role = matchup.get('role', '').lower()
                                 if matchup_role != role.lower():
                                     continue
                             
-                            # Extract win rate
+                            # DEBUG: Print all available fields in the matchup dict
+                            if debug:
+                                print(f"\n[DEBUG] Found matchup for {opponent_name} (role: {role})")
+                                print(f"[DEBUG] All fields in matchup dict: {list(matchup.keys())}")
+                                print(f"[DEBUG] Full matchup dict: {matchup}")
+                            
+                            # Extract win rate - try multiple possible field names
+                            # u.gg might use different field names for win rate
+                            # IMPORTANT: Skip counter_score and difficulty - these are NOT win rates
+                            counter_score = matchup.get('counter_score') or matchup.get('difficulty') or matchup.get('score')
+                            
+                            # Look for actual win rate fields (prefer these over generic 'score' fields)
                             winrate = (matchup.get('winrate') or 
                                      matchup.get('win_rate') or 
-                                     matchup.get('winRate'))
+                                     matchup.get('winRate') or
+                                     matchup.get('matchupWinRate') or
+                                     matchup.get('matchup_winrate') or
+                                     matchup.get('wr') or
+                                     matchup.get('win_rate_percent') or
+                                     matchup.get('winRatePercent') or
+                                     matchup.get('winRatePercent') or
+                                     matchup.get('win_rate_pct'))
+                            
+                            # If we only have a generic 'score' field and it's not in win rate range, skip it
+                            # (it's probably a counter score, not a win rate)
+                            if not winrate and counter_score is not None:
+                                try:
+                                    score_val = float(counter_score) if isinstance(counter_score, (int, float)) else float(str(counter_score).replace('%', ''))
+                                    if score_val > 1:
+                                        score_val = score_val / 100.0
+                                    # Counter scores are typically very low (0.1-0.3) or very high (0.7-0.9)
+                                    # Win rates are typically 0.4-0.6. If score is in win rate range, use it
+                                    if 0.4 <= score_val <= 0.6:
+                                        winrate = counter_score
+                                    # Otherwise, it's probably a counter score, not a win rate - skip it
+                                except (ValueError, TypeError):
+                                    pass
+                            
+                            if debug:
+                                print(f"[DEBUG] Extracted winrate field value: {winrate}")
+                                print(f"[DEBUG] Counter score value: {counter_score}")
+                            
                             if winrate:
                                 if isinstance(winrate, str):
                                     # Remove % if present
-                                    winrate = winrate.replace('%', '')
+                                    winrate = winrate.replace('%', '').strip()
                                 try:
                                     wr = float(winrate)
                                     # If it's > 1, assume it's a percentage
                                     if wr > 1:
-                                        return wr / 100.0
-                                    return wr
+                                        wr = wr / 100.0
+                                    
+                                    # Validate: win rates should typically be between 0.4 and 0.6 (40-60%)
+                                    # Most matchups are close to 50%, so values far from 0.5 are suspicious
+                                    if 0.35 <= wr <= 0.65:
+                                        # This looks like a valid win rate
+                                        return wr
+                                    elif 0.25 <= wr < 0.35 or 0.65 < wr <= 0.75:
+                                        # Still plausible but less common - use as-is
+                                        return wr
+                                    elif wr < 0.25:
+                                        # Very low - might be opponent's win rate or counter score
+                                        # Try inverting, but only if result is reasonable
+                                        inverted = 1.0 - wr
+                                        if 0.35 <= inverted <= 0.65:
+                                            return inverted
+                                        # If inversion doesn't help, this is probably not a win rate - skip it
+                                        return None
+                                    elif wr > 0.75:
+                                        # Very high - might already be inverted or wrong field
+                                        inverted = 1.0 - wr
+                                        if 0.35 <= inverted <= 0.65:
+                                            return inverted
+                                        # If inversion doesn't help, this is probably not a win rate - skip it
+                                        return None
+                                    
+                                    # If still outside range, it's probably not a win rate
+                                    return None
                                 except (ValueError, TypeError):
                                     pass
             
-            # Recursively search nested structures
+            # Recursively search nested structures (pass debug parameter)
+            if debug:
+                print(f"[DEBUG] No matchups/counters found in top level, searching nested structures...")
+                print(f"[DEBUG] Top-level keys: {list(data.keys())[:10]}")  # Show first 10 keys
             for value in data.values():
-                result = self._extract_matchup_winrate_from_json(value, opponent_name, role)
+                result = self._extract_matchup_winrate_from_json(value, opponent_name, role, debug)
                 if result is not None:
                     return result
         elif isinstance(data, list):
+            if debug:
+                print(f"[DEBUG] Searching list with {len(data)} items...")
             for item in data:
-                result = self._extract_matchup_winrate_from_json(item, opponent_name, role)
+                result = self._extract_matchup_winrate_from_json(item, opponent_name, role, debug)
                 if result is not None:
                     return result
         
@@ -1122,50 +1447,39 @@ class CompositionScorer:
         matchup_differences = []
         matchup_details = []
         
+        # DEBUG: Track matchup cache status
+        debug_matchups = hasattr(self, '_debug_matchups') and self._debug_matchups
+        matchup_cache_before = len(self.matchup_cache)
+        
         for i, role in enumerate(role_order):
             blue_champ = blue_team[i]
             red_champ = red_team[i]
             
-            # Get win rates
+            # OPTIMIZATION: Only make ONE API call per matchup pair
+            # If we get blue vs red, we can derive red vs blue = 1 - (blue vs red)
+            if debug_matchups:
+                cache_before = len(self.matchup_cache)
             wr_blue_vs_red = self.get_champion_matchup_winrate(blue_champ, red_champ, role)
-            wr_red_vs_blue = self.get_champion_matchup_winrate(red_champ, blue_champ, role)
+            if debug_matchups:
+                cache_after = len(self.matchup_cache)
+                cache_hit = cache_after == cache_before
+                status = "CACHE HIT" if cache_hit else f"NEW API CALL (cache: {cache_before} -> {cache_after})"
+                wr_str = f"{wr_blue_vs_red:.2%}" if wr_blue_vs_red is not None else "N/A"
+                print(f"        [{role}] {blue_champ} vs {red_champ}: {wr_str} - {status}")
             
-            # Calculate difference: WRb - WRr (Blue advantage)
-            if wr_blue_vs_red is not None and wr_red_vs_blue is not None:
-                # WRb - WRr (blue win rate vs red minus red win rate vs blue)
-                # This represents blue's advantage in the matchup
+            # Derive red vs blue from blue vs red (no additional API call needed)
+            if wr_blue_vs_red is not None:
+                wr_red_vs_blue = 1.0 - wr_blue_vs_red
+                # Calculate difference: WRb - WRr (Blue advantage)
                 diff = wr_blue_vs_red - wr_red_vs_blue
+                # This simplifies to: wr_blue_vs_red - (1 - wr_blue_vs_red) = 2 * wr_blue_vs_red - 1
+                # But we keep it explicit for clarity
                 matchup_differences.append(diff)
                 matchup_details.append({
                     'role': role,
                     'blue_champ': blue_champ,
                     'red_champ': red_champ,
                     'wr_blue_vs_red': wr_blue_vs_red,
-                    'wr_red_vs_blue': wr_red_vs_blue,
-                    'difference': diff
-                })
-            elif wr_blue_vs_red is not None:
-                # Only have blue's win rate, use it as proxy
-                # Convert to advantage: if blue wins 52% vs red, advantage is +0.02
-                diff = wr_blue_vs_red - 0.50
-                matchup_differences.append(diff)
-                matchup_details.append({
-                    'role': role,
-                    'blue_champ': blue_champ,
-                    'red_champ': red_champ,
-                    'wr_blue_vs_red': wr_blue_vs_red,
-                    'wr_red_vs_blue': None,
-                    'difference': diff
-                })
-            elif wr_red_vs_blue is not None:
-                # Only have red's win rate, invert it
-                diff = 0.50 - wr_red_vs_blue
-                matchup_differences.append(diff)
-                matchup_details.append({
-                    'role': role,
-                    'blue_champ': blue_champ,
-                    'red_champ': red_champ,
-                    'wr_blue_vs_red': None,
                     'wr_red_vs_blue': wr_red_vs_blue,
                     'difference': diff
                 })
@@ -1787,6 +2101,7 @@ class CompositionScorer:
                                                 debug: bool = False) -> Optional[Dict]:
         """
         Get a player's win rate on a specific champion from OP.GG.
+        Uses caching to avoid redundant API calls for the same player-champion combination.
         
         Args:
             player_name: Summoner name or Riot ID (e.g., 'dtboss-2003' or 'dtboss#2003')
@@ -1798,6 +2113,14 @@ class CompositionScorer:
         Returns:
             Dictionary with 'winrate' (float), 'games_played' (int), or None if not found
         """
+        # Check cache first - use normalized names for cache key
+        cache_key = (player_name.lower().strip(), champion.lower().strip(), region.lower())
+        if cache_key in self.player_comfort_cache:
+            cached_result = self.player_comfort_cache[cache_key]
+            if debug:
+                print(f"  [DEBUG] [OP.GG] Cache HIT for {player_name} on {champion}")
+            return cached_result
+        
         # Normalize player name for URL
         original_name = player_name
         if '#' in player_name:
@@ -1937,9 +2260,13 @@ class CompositionScorer:
                                 
                                 if games > 0:
                                     if games >= min_games:
-                                        return {'winrate': winrate, 'games_played': int(games)}
+                                        result = {'winrate': winrate, 'games_played': int(games)}
+                                        self.player_comfort_cache[cache_key] = result
+                                        return result
                                     else:
-                                        return {'winrate': 0.5, 'games_played': int(games)}
+                                        result = {'winrate': 0.5, 'games_played': int(games)}
+                                        self.player_comfort_cache[cache_key] = result
+                                        return result
                         
                         if debug:
                             print(f"  [DEBUG] [OP.GG] Champion not found in JSON data")
@@ -2075,9 +2402,13 @@ class CompositionScorer:
                             
                             if games > 0:
                                 if games >= min_games:
-                                    return {'winrate': winrate, 'games_played': games}
+                                    result = {'winrate': winrate, 'games_played': games}
+                                    self.player_comfort_cache[cache_key] = result
+                                    return result
                                 else:
-                                    return {'winrate': 0.5, 'games_played': games}
+                                    result = {'winrate': 0.5, 'games_played': games}
+                                    self.player_comfort_cache[cache_key] = result
+                                    return result
                         
                         elif wins_match and losses_match:
                             # Format: "18W" and "17L" separate, with optional percentage
@@ -2102,15 +2433,21 @@ class CompositionScorer:
             
             if debug:
                 print(f"  [DEBUG] [OP.GG] Champion not found")
+            # Cache None to avoid retrying failed lookups
+            self.player_comfort_cache[cache_key] = None
             return None
             
         except requests.RequestException as e:
             if debug:
                 print(f"  [DEBUG] [OP.GG] Request failed: {e}")
+            # Cache None to avoid retrying failed requests
+            self.player_comfort_cache[cache_key] = None
             return None
         except (ValueError, AttributeError) as e:
             if debug:
                 print(f"  [DEBUG] [OP.GG] Parsing failed: {e}")
+            # Cache None to avoid retrying failed parsing
+            self.player_comfort_cache[cache_key] = None
             return None
     
     def _extract_champion_stats_from_json(self, data, champion_name: str, debug: bool = False) -> Optional[Dict]:
@@ -2258,7 +2595,8 @@ class CompositionScorer:
     def calculate_player_comfort_score(self, blue_players: List[str], red_players: List[str],
                                        blue_team: List[str], red_team: List[str],
                                        region: str = 'na1', w2: float = 0.35,
-                                       return_details: bool = False) -> float:
+                                       return_details: bool = False,
+                                       use_database: bool = None) -> float:
         """
         Calculate player comfort score: w2 * ∑(Player WR on champ - Enemy WR on champ) for all 5 roles.
         
@@ -2274,10 +2612,15 @@ class CompositionScorer:
             region: Region code (default 'na1')
             w2: Weight factor (default 0.35)
             return_details: If True, returns dict with score and breakdown details
+            use_database: If True, use database (worlds2025.db). If False, use OP.GG scraping.
+                          If None (default), use database when available, otherwise fall back to OP.GG.
             
         Returns:
             Player comfort score clamped to [-0.15, 0.15], or dict with details if return_details=True
         """
+        # Default to database if available, otherwise use OP.GG
+        if use_database is None:
+            use_database = HAS_PLAYER_COMFORT_DB
         if len(blue_players) != 5 or len(red_players) != 5:
             raise ValueError("Both teams must have exactly 5 players")
         if len(blue_team) != 5 or len(red_team) != 5:
@@ -2293,10 +2636,43 @@ class CompositionScorer:
             blue_champ = blue_team[i]
             red_champ = red_team[i]
             
-            # Get player winrates on their champions using OP.GG scraping
-            # This replaces the previous method that used Riot API for winrates
-            blue_stats = self._get_player_champion_winrate_from_opgg(blue_player, blue_champ, region, min_games=10, debug=False)
-            red_stats = self._get_player_champion_winrate_from_opgg(red_player, red_champ, region, min_games=10, debug=False)
+            # Get player winrates - use database if available and requested, otherwise use OP.GG scraping
+            # Cache key for player comfort: (player_name, champion_name)
+            blue_cache_key = (blue_player.lower().strip(), blue_champ.lower().strip())
+            red_cache_key = (red_player.lower().strip(), red_champ.lower().strip())
+            
+            # Check cache first
+            if blue_cache_key in self.player_comfort_cache:
+                blue_stats = self.player_comfort_cache[blue_cache_key]
+            else:
+                if use_database and HAS_PLAYER_COMFORT_DB:
+                    # Load from database (fast, from worlds2025.db)
+                    blue_comfort = get_player_comfort(blue_player, blue_champ, min_games=10)
+                    blue_stats = {
+                        'winrate': blue_comfort['winrate'],
+                        'games_played': blue_comfort['games']
+                    } if blue_comfort['found'] else None
+                else:
+                    # Fall back to OP.GG scraping (slower, but works for any player)
+                    blue_stats = self._get_player_champion_winrate_from_opgg(blue_player, blue_champ, region, min_games=10, debug=False)
+                # Cache the result (even if None)
+                self.player_comfort_cache[blue_cache_key] = blue_stats
+            
+            if red_cache_key in self.player_comfort_cache:
+                red_stats = self.player_comfort_cache[red_cache_key]
+            else:
+                if use_database and HAS_PLAYER_COMFORT_DB:
+                    # Load from database (fast, from worlds2025.db)
+                    red_comfort = get_player_comfort(red_player, red_champ, min_games=10)
+                    red_stats = {
+                        'winrate': red_comfort['winrate'],
+                        'games_played': red_comfort['games']
+                    } if red_comfort['found'] else None
+                else:
+                    # Fall back to OP.GG scraping (slower, but works for any player)
+                    red_stats = self._get_player_champion_winrate_from_opgg(red_player, red_champ, region, min_games=10, debug=False)
+                # Cache the result (even if None)
+                self.player_comfort_cache[red_cache_key] = red_stats
             
             # Use winrates (0.5 if not enough games or not found)
             blue_wr = blue_stats['winrate'] if blue_stats else 0.5

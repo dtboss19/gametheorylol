@@ -1,9 +1,11 @@
 """
-Subgame Perfect Nash Equilibrium (SPNE) Solver for League of Legends
-Uses backward induction to find optimal strategies in sequential games.
+Subgame Perfect Nash Equilibrium (SPNE) and Bayesian Nash Equilibrium (BNE) Solver for League of Legends.
 
-SPNE is a refinement of Nash equilibrium that eliminates non-credible threats
-by requiring equilibrium strategies to be optimal at every subgame.
+SPNE uses backward induction to find optimal strategies in sequential games with perfect information.
+BNE handles incomplete information when flex picks create uncertainty about role assignments.
+
+When champions can play multiple roles (flex picks), the opponent doesn't know which role
+they will be assigned to, creating incomplete information that requires Bayesian Nash Equilibrium.
 """
 
 from typing import List, Dict, Tuple, Optional, Set, Callable
@@ -66,6 +68,157 @@ class SubgamePerfectNashEquilibrium:
             self.champion_data_cache[champion_name] = self.scorer.get_champion_data(champion_name)
         return self.champion_data_cache[champion_name]
     
+    def get_flex_roles(self, champion_name: str) -> List[str]:
+        """
+        Get all roles a champion can play (flex picks).
+        
+        Args:
+            champion_name: Name of the champion
+            
+        Returns:
+            List of role names (e.g., ['top', 'jungle', 'support'])
+        """
+        champ_data = self._get_champion_data_cached(champion_name)
+        if not champ_data:
+            return []
+        
+        role_mapping = {
+            'is_top': 'top',
+            'is_jungle': 'jungle',
+            'is_mid': 'mid',
+            'is_adc': 'adc',
+            'is_support': 'support'
+        }
+        
+        flex_roles = []
+        for db_key, role_name in role_mapping.items():
+            role_value = champ_data.get(db_key, 0)
+            if role_value == 1 or role_value == '1' or str(role_value).strip() == '1':
+                flex_roles.append(role_name)
+        
+        return flex_roles
+    
+    def identify_flex_picks(self, team: List[str], assigned_roles: List[str] = None) -> Dict[str, List[str]]:
+        """
+        Identify which champions in a team are flex picks (can play multiple roles).
+        
+        Args:
+            team: List of 5 champions (or None for empty slots)
+            assigned_roles: Optional list of 5 role names corresponding to team positions
+                          If None, uses standard role order ['top', 'jungle', 'mid', 'adc', 'support']
+                          
+        Returns:
+            Dict mapping champion name -> list of possible roles they can play
+        """
+        if assigned_roles is None:
+            assigned_roles = ['top', 'jungle', 'mid', 'adc', 'support']
+        
+        flex_picks = {}
+        
+        for i, champ in enumerate(team):
+            if champ is None:
+                continue
+            
+            flex_roles = self.get_flex_roles(champ)
+            if len(flex_roles) > 1:
+                # This is a flex pick - can play multiple roles
+                flex_picks[champ] = flex_roles
+        
+        return flex_picks
+    
+    def calculate_expected_payoff_with_flex_picks(self,
+                                                 blue_team: List[str],
+                                                 red_team: List[str],
+                                                 blue_flex_picks: Dict[str, List[str]],
+                                                 blue_players: List[str] = None,
+                                                 red_players: List[str] = None,
+                                                 region: str = 'na1',
+                                                 belief_weights: Dict[str, Dict[str, float]] = None) -> float:
+        """
+        Calculate expected payoff when Blue has flex picks with uncertain role assignments.
+        
+        This implements Bayesian Nash Equilibrium by calculating expected payoffs
+        over all possible role assignments for flex picks.
+        
+        Args:
+            blue_team: Current blue team (with flex picks in their current positions)
+            red_team: Current red team
+            blue_flex_picks: Dict mapping champion -> list of possible roles
+                          e.g., {'Poppy': ['top', 'jungle', 'support']}
+            blue_players: Optional blue player names
+            red_players: Optional red player names
+            region: Region for data fetching
+            belief_weights: Optional dict mapping champion -> role -> probability
+                          If None, uses uniform distribution over possible roles
+                          
+        Returns:
+            Expected payoff (weighted average over all role assignments)
+        """
+        if not blue_flex_picks:
+            # No flex picks, just calculate normal payoff
+            return self.calculate_payoff(blue_team, red_team, blue_players, red_players, region)
+        
+        # Generate all possible role assignments for flex picks
+        import itertools
+        
+        # Get all possible role assignments
+        flex_champions = list(blue_flex_picks.keys())
+        possible_roles = [blue_flex_picks[champ] for champ in flex_champions]
+        
+        # Generate all combinations of role assignments
+        role_assignments = list(itertools.product(*possible_roles))
+        
+        if not role_assignments:
+            return self.calculate_payoff(blue_team, red_team, blue_players, red_players, region)
+        
+        # Calculate expected payoff
+        total_payoff = 0.0
+        total_weight = 0.0
+        
+        for assignment in role_assignments:
+            # Create a copy of blue_team with flex picks assigned to roles
+            assigned_blue_team = blue_team.copy()
+            
+            # Assign flex picks to their roles
+            for i, champ in enumerate(flex_champions):
+                role = assignment[i]
+                role_idx = {'top': 0, 'jungle': 1, 'mid': 2, 'adc': 3, 'support': 4}[role]
+                
+                # Find where this champion is in blue_team and move it to the correct role
+                if champ in assigned_blue_team:
+                    current_idx = assigned_blue_team.index(champ)
+                    # Swap or assign to correct position
+                    if assigned_blue_team[role_idx] is None:
+                        assigned_blue_team[role_idx] = champ
+                        assigned_blue_team[current_idx] = None
+                    else:
+                        # Role already filled, swap
+                        temp = assigned_blue_team[role_idx]
+                        assigned_blue_team[role_idx] = champ
+                        assigned_blue_team[current_idx] = temp
+            
+            # Calculate probability weight for this assignment
+            if belief_weights:
+                weight = 1.0
+                for i, champ in enumerate(flex_champions):
+                    role = assignment[i]
+                    champ_weights = belief_weights.get(champ, {})
+                    weight *= champ_weights.get(role, 1.0 / len(blue_flex_picks[champ]))
+            else:
+                # Uniform distribution: each assignment equally likely
+                weight = 1.0 / len(role_assignments)
+            
+            # Calculate payoff for this assignment
+            payoff = self.calculate_payoff(assigned_blue_team, red_team, blue_players, red_players, region, use_fast_mode=True)
+            total_payoff += payoff * weight
+            total_weight += weight
+        
+        # Normalize by total weight
+        if total_weight > 0:
+            return total_payoff / total_weight
+        else:
+            return self.calculate_payoff(blue_team, red_team, blue_players, red_players, region)
+    
     def calculate_payoff(self, blue_team: List[str], red_team: List[str],
                          blue_players: List[str] = None, 
                          red_players: List[str] = None,
@@ -92,18 +245,29 @@ class SubgamePerfectNashEquilibrium:
             return 0.0
         
         # Check cache if memoization is enabled
+        cache_hit = False
         if self.use_memoization:
             cache_key = (tuple(sorted(blue_team)), tuple(sorted(red_team)), 
                         tuple(blue_players) if blue_players else None,
                         tuple(red_players) if red_players else None,
                         region)
             if cache_key in self.payoff_cache:
+                cache_hit = True
+                if self.show_progress:
+                    # Don't print every cache hit, just track it
+                    pass
                 return self.payoff_cache[cache_key]
         
-        # Track calculations
-        self.calculation_count += 1
+        # Track calculations (only count actual calculations, not cache hits)
+        if not cache_hit:
+            self.calculation_count += 1
         if self.show_progress and self.calculation_count % 25 == 0:
             print(f"  Calculations: {self.calculation_count}...", end='\r', flush=True)
+        
+        # DEBUG: Add timing breakdown
+        import time
+        timing_debug = hasattr(self, '_debug_timing') and self._debug_timing
+        timings = {}
         
         # Calculate lane matchup score
         # If skip_api_calls or use_fast_mode, we'll use a simplified version
@@ -112,23 +276,38 @@ class SubgamePerfectNashEquilibrium:
             matchup = 0.0  # Skip slow matchup calculations
             comfort = 0.0  # Skip player comfort (requires API)
         else:
+            if timing_debug:
+                t0 = time.time()
             matchup = self.scorer.calculate_lane_matchup_score(
                 blue_team, red_team, None, self.w1, return_details=False
             )
+            if timing_debug:
+                timings['matchup'] = time.time() - t0
             
             # Calculate player comfort score (if players provided)
             comfort = 0.0
             if blue_players and red_players and len(blue_players) == 5 and len(red_players) == 5:
+                if timing_debug:
+                    t0 = time.time()
                 comfort_result = self.scorer.calculate_player_comfort_score(
                     blue_players, red_players, blue_team, red_team,
                     region, self.w2, return_details=False
                 )
+                if timing_debug:
+                    timings['comfort'] = time.time() - t0
                 comfort = comfort_result if isinstance(comfort_result, (int, float)) else comfort_result.get('score', 0.0)
         
         # Calculate composition scores (fast, uses database only)
+        if timing_debug:
+            t0 = time.time()
         blue_comp = self.scorer.calculate_composition_score(blue_team, self.w3)
         red_comp = self.scorer.calculate_composition_score(red_team, self.w3)
+        if timing_debug:
+            timings['composition'] = time.time() - t0
         comp_advantage = blue_comp['total_score'] - red_comp['total_score']
+        
+        if timing_debug and timings:
+            print(f"      [TIMING] matchup={timings.get('matchup', 0):.2f}s, comfort={timings.get('comfort', 0):.2f}s, comp={timings.get('composition', 0):.2f}s")
         
         # Total payoff = S score
         payoff = matchup + comfort + comp_advantage
@@ -380,18 +559,31 @@ class SubgamePerfectNashEquilibrium:
         # 1. It makes cache less effective (same state with different available champs won't match)
         # 2. Available champs can be derived from blue/red teams and initial pool
         # 3. The optimal strategy at a given state is primarily determined by team composition
+        # 
+        # However, we DO include a hash of available champions to ensure we don't reuse
+        # cached results when the available pool changes (e.g., different bans)
+        available_hash = hash(tuple(sorted(available_champions)))
         state_key = (
             tuple(sorted(blue_current)), tuple(sorted(red_current)),
             total_picks,  # Track position in draft order
             tuple(blue_players) if blue_players else None,
             tuple(red_players) if red_players else None,
-            region
+            region,
+            available_hash  # Include available champions hash
         )
         
         # Check state cache if memoization is enabled
-        if self.use_memoization and state_key in self.state_cache:
-            cached_result = self.state_cache[state_key]
-            return cached_result.copy()
+        # NOTE: We disable state caching during backward induction to ensure we explore all paths
+        # State caching can cause issues when the same state is reached via different paths
+        # and we want to ensure we're finding the true optimal strategy
+        use_state_cache = False  # Disable state cache during backward induction for accuracy
+        
+        # DO NOT use state cache - we want to explore all paths to find true SPNE
+        # if self.use_memoization and use_state_cache and state_key in self.state_cache:
+        #     cached_result = self.state_cache[state_key]
+        #     if self.show_progress:
+        #         print(f"  [CACHE HIT] Reusing cached result for this state (blue={blue_current}, red={red_current}, picks={total_picks})", end='\r', flush=True)
+        #     return cached_result.copy()
         
         if len(blue_current) == 5 and len(red_current) == 5:
             # Game complete - calculate payoff (use full calculation for terminal nodes)
@@ -404,7 +596,8 @@ class SubgamePerfectNashEquilibrium:
                 'strategy': None,
                 'best_response': None
             }
-            if self.use_memoization:
+            # Only cache if state caching is enabled
+            if self.use_memoization and use_state_cache:
                 self.state_cache[state_key] = result.copy()
             return result
         
@@ -424,7 +617,8 @@ class SubgamePerfectNashEquilibrium:
                 'strategy': None,
                 'best_response': None
             }
-            if self.use_memoization:
+            # Only cache if state caching is enabled
+            if self.use_memoization and use_state_cache:
                 self.state_cache[state_key] = result.copy()
             return result
         
@@ -443,16 +637,108 @@ class SubgamePerfectNashEquilibrium:
                 'strategy': None,
                 'best_response': None
             }
-            if self.use_memoization:
+            # Only cache if state caching is enabled
+            if self.use_memoization and use_state_cache:
                 self.state_cache[state_key] = result.copy()
             return result
         
-        current_player = draft_order[total_picks]
+        # Calculate how many picks have been made in THIS draft (excluding locked picks)
+        # This is needed to correctly identify the final pick
+        initial_blue_count = len([c for c in blue_team if c is not None])
+        initial_red_count = len([c for c in red_team if c is not None])
+        picks_made_in_draft = (blue_picks - initial_blue_count) + (red_picks - initial_red_count)
+        
+        # Determine whose turn it is
+        current_player = draft_order[picks_made_in_draft] if picks_made_in_draft < len(draft_order) else draft_order[-1]
         is_blue = (current_player == 'blue')
         
+        # Check if Blue has consecutive picks (e.g., BOT + SUPPORT)
+        # If so, we need to evaluate all combinations together, not sequentially
+        blue_consecutive_picks = 0
+        if is_blue and picks_made_in_draft < len(draft_order) - 1:
+            # Count how many consecutive Blue picks are coming
+            for i in range(picks_made_in_draft, len(draft_order)):
+                if draft_order[i] == 'blue':
+                    blue_consecutive_picks += 1
+                else:
+                    break
+        
         # Use beam search: evaluate candidates and only explore top N
-        candidates_to_explore = available_champions
-        if len(available_champions) > self.beam_width:
+        # BUT: For the final pick in the draft (Red's last pick), explore ALL valid role champions
+        # This ensures we find the true best response
+        # The final pick is when we're at the last position in draft_order
+        is_final_pick = (picks_made_in_draft == len(draft_order) - 1)  # Last pick in draft order
+        
+        if self.show_progress and is_final_pick:
+            print(f"  [FINAL PICK DETECTED] picks_made={picks_made_in_draft}, draft_order_length={len(draft_order)}, player={'Blue' if is_blue else 'Red'}")
+        
+        # For final pick, always filter by role and explore ALL valid role champions
+        # For non-final picks, use beam search if we have many candidates
+        if is_final_pick:
+            # Determine which role slot needs to be filled
+            role_slots = ['top', 'jungle', 'mid', 'adc', 'support']
+            if is_blue:
+                empty_slot_idx = next((i for i, c in enumerate(blue_team) if c is None), None)
+            else:
+                empty_slot_idx = next((i for i, c in enumerate(red_team) if c is None), None)
+            
+            target_role = role_slots[empty_slot_idx] if empty_slot_idx is not None else None
+            
+            # Map role names to database column names
+            role_mapping = {
+                'top': 'is_top',
+                'jungle': 'is_jungle',
+                'mid': 'is_mid',
+                'adc': 'is_adc',
+                'support': 'is_support'
+            }
+            role_key = role_mapping.get(target_role) if target_role else None
+            
+            # Get ALL valid role champions for final pick
+            valid_role_champions = []
+            for champ in available_champions:
+                if champ in banned_champions:
+                    continue
+                blue_picked = [c for c in blue_team if c is not None]
+                red_picked = [c for c in red_team if c is not None]
+                if champ in blue_picked or champ in red_picked:
+                    continue
+                    
+                champ_data = self._get_champion_data_cached(champ)
+                if champ_data and role_key:
+                    # Check if champion can play this role (handles flex picks)
+                    # A champion can play a role if is_role == 1 (even if it can also play other roles)
+                    role_value = champ_data.get(role_key, 0)
+                    # Handle both integer and string values
+                    can_play_role = (role_value == 1 or role_value == '1' or str(role_value).strip() == '1')
+                    
+                    # Also check if role data is missing - be lenient for flex picks
+                    if not can_play_role and role_key not in champ_data:
+                        # Role column doesn't exist - check if champion has any role data
+                        has_any_role = any(
+                            champ_data.get(f'is_{r}', 0) == 1 
+                            for r in ['top', 'jungle', 'mid', 'adc', 'support']
+                        )
+                        if not has_any_role:
+                            # No role data at all - be lenient and allow it (might be a flex pick)
+                            can_play_role = True
+                    
+                    if can_play_role:
+                        valid_role_champions.append(champ)
+            
+            candidates_to_explore = valid_role_champions
+            if self.show_progress:
+                print(f"\n  [FINAL PICK] Exploring ALL {len(candidates_to_explore)} valid {target_role} champions (not using beam search)")
+                if len(candidates_to_explore) > 0:
+                    sorted_champs = sorted(candidates_to_explore)
+                    print(f"    Champions: {', '.join(sorted_champs[:25])}{'...' if len(sorted_champs) > 25 else ''}")
+                    if 'Maokai' in candidates_to_explore:
+                        print(f"    [VERIFIED] Maokai is in the list of valid TOP champions")
+                    else:
+                        print(f"    [WARNING] Maokai is NOT in the list of valid TOP champions!")
+                else:
+                    print(f"    WARNING: No valid {target_role} champions found!")
+        elif len(available_champions) > self.beam_width:
             # Determine which role slot needs to be filled
             role_slots = ['top', 'jungle', 'mid', 'adc', 'support']
             if is_blue:
@@ -506,6 +792,7 @@ class SubgamePerfectNashEquilibrium:
                             can_fill_role = True
                     else:
                         # Role data exists - check if it's 1 (can play this role)
+                        # This handles flex picks - a champion can play multiple roles
                         can_fill_role = role_value == 1 or role_value == '1' or str(role_value).strip() == '1'
                     
                     if can_fill_role:
@@ -623,7 +910,27 @@ class SubgamePerfectNashEquilibrium:
             # Sort by score and take top beam_width
             # Use secondary sort by champion name (reversed) to break ties non-alphabetically
             candidate_scores.sort(key=lambda x: (x[0], x[1][::-1]), reverse=is_blue)
-            candidates_to_explore = [champ for _, champ in candidate_scores[:self.beam_width]]
+            
+            if is_final_pick:
+                # For final pick, explore ALL valid role champions to ensure we find true best response
+                # Don't use beam search - we need to check every valid option
+                candidates_to_explore = valid_role_champions.copy()
+                if self.show_progress:
+                    print(f"  [FINAL PICK] Exploring ALL {len(candidates_to_explore)} valid {target_role} champions (not using beam search)")
+                    print(f"    Champions: {', '.join(candidates_to_explore[:10])}{'...' if len(candidates_to_explore) > 10 else ''}")
+            elif blue_consecutive_picks >= 2 and is_blue:
+                # Blue has multiple consecutive picks (e.g., BOT + SUPPORT)
+                # Use ALL valid role champions to ensure we evaluate all combinations
+                # The heuristic can't accurately rank individual picks when multiple picks are coming
+                candidates_to_explore = valid_role_champions.copy()
+                if self.show_progress:
+                    print(f"  [BLUE CONSECUTIVE PICKS] Blue has {blue_consecutive_picks} consecutive picks - exploring ALL {len(candidates_to_explore)} valid {target_role} champions")
+                    print(f"    This ensures we evaluate all combinations together, not sequentially")
+            else:
+                # For non-final picks, use beam search
+                candidates_to_explore = [champ for _, champ in candidate_scores[:self.beam_width]]
+                if self.show_progress and len(candidates_to_rank) > self.beam_width:
+                    print(f"  [BEAM SEARCH] Exploring top {len(candidates_to_explore)} of {len(candidates_to_rank)} candidates for {target_role}")
         
         # Find best response by trying top candidates
         best_payoff = float('-inf') if is_blue else float('inf')
@@ -635,6 +942,92 @@ class SubgamePerfectNashEquilibrium:
             empty_slot_idx = next((i for i, c in enumerate(blue_team) if c is None), None)
         else:
             empty_slot_idx = next((i for i, c in enumerate(red_team) if c is None), None)
+        
+        # CRITICAL: For final pick (Red's last pick), ensure we explore ALL valid role champions
+        # Double-check if this is the final pick by checking if there's only one empty slot left
+        # This is a fallback in case picks_made_in_draft calculation is off
+        if empty_slot_idx is not None:
+            role_slots = ['top', 'jungle', 'mid', 'adc', 'support']
+            target_role = role_slots[empty_slot_idx] if empty_slot_idx is not None else None
+            remaining_blue = len([c for c in blue_team if c is None])
+            remaining_red = len([c for c in red_team if c is None])
+            
+            # If Red is picking TOP and it's the only remaining pick, this is the final pick
+            if target_role == 'top' and not is_blue and remaining_blue == 0 and remaining_red == 1:
+                is_final_pick = True
+                if self.show_progress:
+                    print(f"\n  [FINAL PICK FALLBACK] Detected Red's final TOP pick (remaining: B={remaining_blue}, R={remaining_red})")
+            
+            # Also check if we're at the last position in draft_order
+            if picks_made_in_draft == len(draft_order) - 1:
+                is_final_pick = True
+                if self.show_progress:
+                    print(f"\n  [FINAL PICK DETECTED] picks_made={picks_made_in_draft}, draft_order_length={len(draft_order)}")
+        
+        # For final pick, ensure we explore ALL valid role champions (not just top N from beam search)
+        if is_final_pick and empty_slot_idx is not None:
+            # Get ALL valid role champions (not just from beam search)
+            role_slots = ['top', 'jungle', 'mid', 'adc', 'support']
+            target_role = role_slots[empty_slot_idx]
+            role_mapping = {
+                'top': 'is_top',
+                'jungle': 'is_jungle',
+                'mid': 'is_mid',
+                'adc': 'is_adc',
+                'support': 'is_support'
+            }
+            role_key = role_mapping.get(target_role)
+            
+            # Get ALL valid role champions
+            all_valid_for_role = []
+            for champ in available_champions:
+                # Skip if already picked or banned
+                if champ in banned_champions:
+                    continue
+                blue_picked = [c for c in blue_team if c is not None]
+                red_picked = [c for c in red_team if c is not None]
+                if champ in blue_picked or champ in red_picked:
+                    continue
+                    
+                champ_data = self._get_champion_data_cached(champ)
+                if champ_data and role_key:
+                    # Check if champion can play this role (handles flex picks)
+                    role_value = champ_data.get(role_key, 0)
+                    # Handle both integer and string values
+                    can_play_role = (role_value == 1 or role_value == '1' or str(role_value).strip() == '1')
+                    
+                    # Also check if role data is missing - be lenient for flex picks
+                    if not can_play_role and role_key not in champ_data:
+                        # Role column doesn't exist - check if champion has any role data
+                        has_any_role = any(
+                            champ_data.get(f'is_{r}', 0) == 1 
+                            for r in ['top', 'jungle', 'mid', 'adc', 'support']
+                        )
+                        if not has_any_role:
+                            # No role data at all - be lenient and allow it (might be a flex pick)
+                            can_play_role = True
+                    
+                    if can_play_role:
+                        all_valid_for_role.append(champ)
+            
+            # Use ALL valid champions for final pick
+            if len(all_valid_for_role) > 0:
+                if self.show_progress:
+                    sorted_champs = sorted(all_valid_for_role)
+                    print(f"\n  [FINAL PICK] Exploring ALL {len(all_valid_for_role)} valid {target_role} champions (not using beam search)")
+                    print(f"    Champions: {', '.join(sorted_champs[:30])}{'...' if len(sorted_champs) > 30 else ''}")
+                    if 'Maokai' in all_valid_for_role:
+                        print(f"    [VERIFIED] Maokai is in the list of valid TOP champions")
+                    else:
+                        print(f"    [WARNING] Maokai is NOT in the list! Checking why...")
+                        # Debug: check Maokai's role data
+                        maokai_data = self._get_champion_data_cached('Maokai')
+                        if maokai_data:
+                            print(f"      Maokai is_top: {maokai_data.get('is_top', 'MISSING')}")
+                            print(f"      Maokai is_jungle: {maokai_data.get('is_jungle', 'MISSING')}")
+                        else:
+                            print(f"      Maokai data not found in database")
+                candidates_to_explore = all_valid_for_role
         
         # Try picking each candidate champion
         for champ in candidates_to_explore:
@@ -738,9 +1131,12 @@ class SubgamePerfectNashEquilibrium:
             'optimal_action': best_action
         }
         
-        # Cache result
-        if self.use_memoization:
-            self.state_cache[state_key] = result.copy()
+        # DO NOT cache state results during backward induction
+        # This ensures we explore all paths and find the true SPNE
+        # State caching can cause incorrect results when the same state is reached
+        # via different paths in the game tree
+        # if self.use_memoization and use_state_cache:
+        #     self.state_cache[state_key] = result.copy()
         
         return result
     
