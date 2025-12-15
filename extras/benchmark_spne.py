@@ -241,3 +241,4 @@ if __name__ == "__main__":
     print("  - Estimated time: 10-60 minutes (depends on payoff calculation speed)")
     print("\nRecommendation: Use max_depth=5-7 for practical runtime (< 5 minutes)")
 
+
