@@ -13,6 +13,9 @@ A Python implementation of a Subgame Perfect Nash Equilibrium (SPNE) solver for 
 
 ## Worlds 2025 Case Study: 5 Tested Games
 
+**Full project summary (PDF):** see the game theory coversheet  
+[`Results/GameTheory Coversheet.pdf`](Results/GameTheory%20Coversheet.pdf)
+
 This repository includes five end-to-end case studies that replicate specific KT vs T1 draft states from a hypothetical Worlds 2025 series. Each script computes SPNE picks, best responses, and compares them to the actual stage drafts:
 
 - **`test_game1_nash.py`**:  
