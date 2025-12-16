@@ -5,10 +5,12 @@ Handles adding new columns if they don't exist and updating all records.
 
 import sqlite3
 import csv
+import os
 from pathlib import Path
 
-# Database and CSV file paths
-DB_PATH = "lolchampiontags.db"
+# Database and CSV file paths (relative to project root)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DB_PATH = os.path.join(BASE_DIR, "db", "lolchampiontags.db")
 CSV_PATH = "lol_champion_tags.csv"
 
 def add_role_columns_if_needed(conn):

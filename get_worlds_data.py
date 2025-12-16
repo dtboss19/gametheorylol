@@ -89,17 +89,23 @@ TEAM_2 = {
 # CHAMPION NAME NORMALIZATION
 # Maps fandom.com names to lolchampiontags.db format
 # ============================================================================
+import os
+
 CHAMPION_NAME_MAP = {}  # Populated by load_champion_name_map()
 
-def load_champion_name_map(db_path="lolchampiontags.db"):
+def load_champion_name_map(db_path=None):
     """
     Load champion names from lolchampiontags.db and create a lookup map.
     This allows us to match fandom names to database names.
+    If db_path is None, defaults to `db/lolchampiontags.db` relative to this file.
     """
     global CHAMPION_NAME_MAP
     CHAMPION_NAME_MAP = {}
     
     try:
+        if db_path is None:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            db_path = os.path.join(base_dir, "db", "lolchampiontags.db")
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         cursor.execute("SELECT name FROM champions")
@@ -117,7 +123,7 @@ def load_champion_name_map(db_path="lolchampiontags.db"):
         print(f"Loaded {len(CHAMPION_NAME_MAP)//2} champion names from {db_path}")
         return True
     except Exception as e:
-        print(f"⚠️ Could not load champion names: {e}")
+        print(f"WARNING: Could not load champion names: {e}")
         return False
 
 
@@ -190,7 +196,7 @@ def normalize_champion_name(fandom_name: str) -> str:
     
     # If no match found, return with basic normalization
     result = original.replace("'", "").replace(" ", "").replace(".", "")
-    print(f"   ⚠️ Unknown champion: '{original}' -> '{result}' (not in DB)")
+    print(f"   WARNING: Unknown champion: '{original}' -> '{result}' (not in DB)")
     return result
 
 
@@ -433,7 +439,7 @@ def load_player_comfort_data(db_name="worlds2025.db"):
         print(f"Loaded comfort data for {len(PLAYER_COMFORT_DATA)} players")
         return True
     except Exception as e:
-        print(f"⚠️ Could not load player comfort data: {e}")
+        print(f"WARNING: Could not load player comfort data: {e}")
         return False
 
 

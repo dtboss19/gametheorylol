@@ -5,6 +5,7 @@ Score is constrained to [-0.15, 0.15] range.
 """
 
 import sqlite3
+import os
 import re
 import requests
 from typing import List, Dict, Optional, Tuple
@@ -25,16 +26,20 @@ class CompositionScorer:
     # Global alpha constant for sigmoid function
     ALPHA = 0.02
     
-    def __init__(self, db_path: str = "lolchampiontags.db", riot_api_key: str = None):
+    def __init__(self, db_path: str = None, riot_api_key: str = None):
         """
         Initialize the scorer with database connection.
         
         Args:
-            db_path: Path to the champion tags database
+            db_path: Path to the champion tags database. If None, defaults to
+                     the `db/lolchampiontags.db` file relative to this module.
             riot_api_key: Optional Riot Games API key for fetching match data
         """
+        if db_path is None:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            db_path = os.path.join(base_dir, "db", "lolchampiontags.db")
         self.db_path = db_path
-        self.conn = sqlite3.connect(db_path)
+        self.conn = sqlite3.connect(self.db_path)
         self.conn.row_factory = sqlite3.Row  # Access columns by name
         self.riot_api_key = riot_api_key
         # Cache for champion matchups: (champ1, champ2, role) -> winrate
